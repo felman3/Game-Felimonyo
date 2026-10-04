@@ -50,6 +50,14 @@ export function createRenderer(canvas, { mobile }) {
   sun.shadow.bias = -0.0008;
   scene.add(sun, sun.target);
 
+  // Free GPU memory for things we no longer draw (shared materials just get re-uploaded if used again).
+  function disposeTree(root) {
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
+    });
+  }
+
   const lambert = (color, extra) => new THREE.MeshLambertMaterial(Object.assign({ color, flatShading: true }, extra));
 
   /* ---------- Water ---------- */
@@ -75,7 +83,7 @@ export function createRenderer(canvas, { mobile }) {
     hemi.groundColor.set(P.ground);
     if (worldGroup) {
       scene.remove(worldGroup);
-      worldGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+      disposeTree(worldGroup);
     }
     worldGroup = new THREE.Group();
     scene.add(worldGroup);
@@ -471,7 +479,8 @@ export function createRenderer(canvas, { mobile }) {
     const a = avatars.get(id);
     if (!a) return;
     scene.remove(a.root, a.shadow);
-    a.root.traverse((m) => { if (m.geometry) m.geometry.dispose(); });
+    disposeTree(a.root);
+    disposeTree(a.shadow);
     avatars.delete(id);
   }
 
@@ -793,6 +802,8 @@ export function createRenderer(canvas, { mobile }) {
     const c = crates.get(id);
     if (!c) return;
     scene.remove(c.g, c.beam);
+    disposeTree(c.g);
+    disposeTree(c.beam);
     crates.delete(id);
   }
   function clearCrates() { for (const id of [...crates.keys()]) removeCrate(id); }

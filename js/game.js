@@ -347,7 +347,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     const by = m.by && ents.get(m.by);
     if (by) by.kills++;
     if (m.left) feed(e.name + ' left the match');
-    else if (by) feed(by.name + ' 💦 ' + e.name, m.by === myId || m.v === myId);
+    else if (by) feed(by.name + ' ' + (['🎈', '🔫', '🟣'][m.w] || '💦') + ' ' + e.name, m.by === myId || m.v === myId);
     else feed(e.name + ' got soaked by the storm ⛈️', m.v === myId);
     const pos = m.v === myId ? myPos() : e;
     if (!m.left) {
@@ -1010,7 +1010,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     });
     return {
       phase: phase === 'none' ? 'lobby' : phase, seed: worldSeed, tm: matchTime(), roster, ents: list,
-      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId, heirs: heirs.slice(), teams: roomInfo.teams || 1
+      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId, heirs: heirs.slice(), teams: roomInfo.teams || 1,
+      crates: [...crates.values()].map((c) => ({ id: c.id, x: c.x, z: c.z, land: c.land }))
     };
   }
 

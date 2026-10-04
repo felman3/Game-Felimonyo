@@ -80,7 +80,7 @@ export class Host {
     this.storm = S.buildStorm(st.seed);
     this.tm = st.tm;
     this.taken = new Set(st.taken || []);
-    this.crates = [];
+    this.crates = (st.crates || []).map((c) => Object.assign({ taken: false }, c));
     this.cratesSent = S.CRATE_TIMES.filter((t) => t <= st.tm).length;
     this.projs = [];
     this.humanlessT = 0;
@@ -441,7 +441,7 @@ export class Host {
       e.shield -= soak;
       e.hp -= dmg - soak;
       hits.push([e.id, dmg]);
-      if (e.hp <= 0) this.knockOut(e, owner, false);
+      if (e.hp <= 0) this.knockOut(e, owner, false, p.w);
     };
     if (wp.arc) {
       for (const e of this.ents.values()) {
@@ -456,7 +456,7 @@ export class Host {
     this.broadcast({ t: 'sp', id: p.id, w: p.w, o: p.o, x: S.r2(pos.x), y: S.r2(pos.y), z: S.r2(pos.z), h: hits });
   }
 
-  knockOut(e, by, quiet) {
+  knockOut(e, by, quiet, w) {
     if (!e.alive) return;
     e.alive = false;
     e.hp = 0;
@@ -467,7 +467,7 @@ export class Host {
       for (const o of this.ents.values()) if (o.team === e.team) o.place = teams.size + 1;
     } else e.place = 0;
     if (by && by !== e) by.kills++;
-    this.broadcast({ t: 'ko', v: e.id, by: by && by !== e ? by.id : null, place: e.place, left: !!quiet });
+    this.broadcast({ t: 'ko', v: e.id, by: by && by !== e ? by.id : null, place: e.place, left: !!quiet, w: w === undefined ? null : w });
   }
 
   // Supply drops: a crate floats down into the safe zone with the best loot.

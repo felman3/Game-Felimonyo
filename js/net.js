@@ -192,7 +192,7 @@ export async function joinRoom(code, profile) {
 export function errorText(e) {
   const t = e && e.type;
   if (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed') {
-    return 'Can\'t reach the connection service. Check your internet connection, then try again.';
+    return 'Can\'t reach the connection service. Check your internet connection, then try again — or play Practice with bots meanwhile.';
   }
   if (t === 'browser-incompatible') return 'This browser can\'t play online. Try a recent Chrome, Safari, Edge or Firefox.';
   return (e && e.message) || 'Something went wrong. Try again.';
