@@ -381,6 +381,18 @@ input:focus { border-color: var(--accent); }
   transition: width 0.2s;
 }
 
+#hp-shield {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: repeating-linear-gradient(135deg, rgba(160, 235, 255, 0.85) 0 6px, rgba(120, 210, 255, 0.85) 6px 12px);
+  transition: width 0.2s;
+  mix-blend-mode: normal;
+  opacity: 0.9;
+  height: 40%;
+  top: auto;
+}
+
 #hp-fill.low { background: linear-gradient(90deg, #6aa8ff, #3d7bff); }
 
 #hp-text {
@@ -515,6 +527,45 @@ body.touch #touch-buttons {
   body.touch #emotes { display: none; }
   body.touch #touch-buttons { bottom: calc(14px + var(--safe-b)); flex-direction: row; right: calc(14px + var(--safe-r)); }
 }
+
+#hit-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; z-index: 2; }
+.hit-dir {
+  position: absolute;
+  left: -60px;
+  top: -170px;
+  width: 120px;
+  height: 340px;
+  transform-origin: 60px 170px;
+  pointer-events: none;
+  animation: hitdir 0.9s ease-out forwards;
+}
+.hit-dir::before {
+  content: "";
+  position: absolute;
+  left: 30px;
+  top: 0;
+  width: 60px;
+  height: 22px;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  background: radial-gradient(ellipse at 50% 100%, rgba(64, 160, 255, 0.95), rgba(64, 160, 255, 0));
+}
+@keyframes hitdir { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+#hidden-pill {
+  position: absolute;
+  bottom: calc(150px + var(--safe-b));
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(46, 125, 60, 0.8);
+  z-index: 2;
+}
+
+.table-wrap { max-height: 38vh; overflow-y: auto; margin: 6px 0 4px; touch-action: pan-y; }
+#result-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+#result-table td { padding: 5px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+#result-table td:first-child { width: 44px; font-weight: 900; text-align: center; }
+#result-table td:last-child { text-align: right; white-space: nowrap; }
+#result-table tr.me { background: #fff1f6; font-weight: 800; }
 
 /* ---------- Name tags and floating numbers ---------- */
 

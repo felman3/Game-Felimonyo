@@ -55,7 +55,9 @@
         <ul>
           <li>Everyone floats down onto the island with an umbrella.</li>
           <li>Throw water balloons to soak other players. Each splash makes them wetter; at zero dryness they're out.</li>
-          <li>Grab <b>Soakers</b> 🔫 for rapid fire, <b>Mega balloons</b> 🟣 for huge splashes, and <b>Towels</b> to dry off.</li>
+          <li>Grab <b>Soakers</b> 🔫 for rapid fire, <b>Mega balloons</b> 🟣 for huge splashes, <b>Towels</b> to dry off and <b>Bubbles</b> 🫧 that soak up splashes for you.</li>
+          <li>Hide in bushes 🌿: others can't see you until you throw something or come very close.</li>
+          <li>Watch for 📦 supply drops: the first to reach one gets full dryness, a bubble and lots of ammo.</li>
           <li>A rain storm shrinks the island. Stay inside the circle!</li>
           <li><b>Computer:</b> WASD to move, mouse to aim, click to throw, 1/2/3 or wheel to switch, Space to jump, Shift or right-click to dash, E to wave.</li>
           <li><b>Phone:</b> left thumb to walk, drag right thumb to aim and let go to throw. Tap the right side to throw at the nearest player.</li>
@@ -119,10 +121,12 @@
     <canvas id="minimap" width="150" height="150"></canvas>
     <div id="feed"></div>
     <div id="center-msg"></div>
+    <div id="hit-dirs"></div>
+    <div id="hidden-pill" class="pill" hidden>🌿 Hidden in a bush</div>
     <div id="spectating" hidden>Watching <b id="spectating-name"></b> <button id="spectate-next" class="btn small-btn">Next ›</button></div>
 
     <div class="hud-bottom">
-      <div id="hp"><div id="hp-fill"></div><span id="hp-text">Dryness 100</span></div>
+      <div id="hp"><div id="hp-fill"></div><div id="hp-shield"></div><span id="hp-text">Dryness 100</span></div>
       <div id="slots">
         <button class="slot" data-w="0"><span class="ico">🎈</span><span class="ammo">∞</span><span class="key">1</span></button>
         <button class="slot" data-w="1"><span class="ico">🔫</span><span class="ammo">0</span><span class="key">2</span></button>
@@ -145,6 +149,7 @@
       <h2 id="result-title"></h2>
       <p id="result-place"></p>
       <p id="result-stats" class="muted"></p>
+      <div class="table-wrap"><table id="result-table"></table></div>
       <p class="muted">Next round starts in a few seconds…</p>
       <button id="results-leave" class="btn ghost">Leave</button>
     </div>

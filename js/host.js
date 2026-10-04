@@ -76,6 +76,8 @@ export class Host {
     this.storm = S.buildStorm(st.seed);
     this.tm = st.tm;
     this.taken = new Set(st.taken || []);
+    this.crates = [];
+    this.cratesSent = S.CRATE_TIMES.filter((t) => t <= st.tm).length;
     this.projs = [];
     this.humanlessT = 0;
     this.roster = st.roster;
@@ -103,7 +105,7 @@ export class Host {
       id: p.id, name: p.name, color: p.color, hat: p.hat || 0, bot: p.bot,
       x, z, y: S.DROP_Y, vy: 0, yaw: Math.atan2(-x, -z), ground: false, umbrella: true,
       dashT: 0, dashCd: 0, ddx: 0, ddz: 0,
-      hp: S.MAX_HP, alive: true, ammo: [0, 0, 0], lastFire: -9, kills: 0, place: 0, f: 0,
+      hp: S.MAX_HP, shield: 0, alive: true, ammo: [0, 0, 0], lastFire: -9, kills: 0, place: 0, f: 0,
       px: x, pz: z, vx: 0, vz: 0,
       ai: p.bot ? newBrain() : null
     };
@@ -273,6 +275,8 @@ export class Host {
     this.ents.clear();
     this.projs = [];
     this.taken = new Set();
+    this.crates = [];
+    this.cratesSent = 0;
     this.tm = 0;
     this.snapT = 0;
     this.humanlessT = 0;
@@ -401,7 +405,9 @@ export class Host {
     const hurt = (e, dmg) => {
       dmg = Math.round(dmg);
       if (dmg <= 0) return;
-      e.hp -= dmg;
+      const soak = Math.min(e.shield, dmg);
+      e.shield -= soak;
+      e.hp -= dmg - soak;
       hits.push([e.id, dmg]);
       if (e.hp <= 0) this.knockOut(e, owner, false);
     };
@@ -429,6 +435,32 @@ export class Host {
     this.broadcast({ t: 'ko', v: e.id, by: by && by !== e ? by.id : null, place: e.place, left: !!quiet });
   }
 
+  // Supply drops: a crate floats down into the safe zone with the best loot.
+  stepCrates() {
+    for (let i = 0; i < S.CRATE_TIMES.length; i++) {
+      if (this.cratesSent > i || this.tm < S.CRATE_TIMES[i]) continue;
+      this.cratesSent = i + 1;
+      const st = S.stormAt(this.storm, this.tm + S.CRATE_FALL);
+      const [x, z] = pointNear(this.world, st.nx, st.nz, Math.max(3, st.nr * 0.6));
+      const c = { id: i + 1, x: S.r2(x), z: S.r2(z), land: S.r2(this.tm + S.CRATE_FALL), taken: false };
+      this.crates.push(c);
+      this.broadcast(Object.assign({ t: 'crate' }, c));
+    }
+    for (const c of this.crates) {
+      if (c.taken || this.tm < c.land) continue;
+      for (const e of this.ents.values()) {
+        if (!e.alive || Math.hypot(e.x - c.x, e.z - c.z) > 2.2) continue;
+        c.taken = true;
+        e.hp = S.MAX_HP;
+        e.shield = S.SHIELD_MAX;
+        e.ammo[S.W_SOAKER] = Math.min(S.WEAPONS[1].max, e.ammo[S.W_SOAKER] + 80);
+        e.ammo[S.W_MEGA] = S.WEAPONS[2].max;
+        this.broadcast({ t: 'crateTaken', id: c.id, by: e.id });
+        break;
+      }
+    }
+  }
+
   stepPickups() {
     const pk = this.world.pickups;
     for (const e of this.ents.values()) {
@@ -440,6 +472,9 @@ export class Host {
         if (p.type === S.PICK_TOWEL) {
           if (e.hp >= S.MAX_HP) continue;
           e.hp = Math.min(S.MAX_HP, e.hp + S.TOWEL_HEAL);
+        } else if (p.type === S.PICK_SHIELD) {
+          if (e.shield >= S.SHIELD_MAX) continue;
+          e.shield = Math.min(S.SHIELD_MAX, e.shield + S.SHIELD_PICK);
         } else {
           const w = p.type === S.PICK_SOAKER ? S.W_SOAKER : S.W_MEGA;
           const wp = S.WEAPONS[w];
@@ -492,14 +527,14 @@ export class Host {
     let alive = 0;
     for (const e of this.ents.values()) {
       if (e.alive) alive++;
-      // f: 1 alive, 2 dashing, 4 moving, 8 umbrella, 16-48 weapon in hand
-      const f = (e.alive ? 1 : 0) | (e.f & 62);
+      // f: 1 alive, 2 dashing, 4 moving, 8 umbrella, 16-48 weapon in hand, 64 bubble shield, 128 just threw
+      const f = (e.alive ? 1 : 0) | (e.f & 62) | (e.shield > 0 ? 64 : 0) | (this.tm - e.lastFire < S.HIDE_AFTER ? 128 : 0);
       p.push([e.id, S.r2(e.x), S.r2(e.y), S.r2(e.z), S.r2(e.yaw), Math.max(0, Math.ceil(e.hp)), f]);
     }
     const base = { t: 'snap', tm: Math.round(this.tm * 1000) / 1000, p, n: alive };
     for (const m of this.members.values()) {
       const e = this.ents.get(m.id);
-      this.sendTo(m, e ? Object.assign({ me: { a: [e.ammo[1], e.ammo[2]], k: e.kills } }, base) : base);
+      this.sendTo(m, e ? Object.assign({ me: { a: [e.ammo[1], e.ammo[2]], k: e.kills, s: Math.ceil(e.shield) } }, base) : base);
     }
   }
 
@@ -546,6 +581,7 @@ export class Host {
     }
     this.stepShots();
     this.stepPickups();
+    this.stepCrates();
     this.stepStorm(dt);
     this.checkEnd(dt);
     this.snapT += dt;
@@ -577,6 +613,7 @@ export class Host {
         for (const o of this.ents.values()) {
           if (!o.alive || o === e) continue;
           const d = Math.hypot(o.x - e.x, o.z - e.z);
+          if (d > S.SEE_HIDDEN && this.tm - o.lastFire > S.HIDE_AFTER && S.inBush(w, o.x, o.z)) continue;
           if (d < best && !S.lineBlocked(w, e.x, e.z, o.x, o.z, e.y + 2.6)) { best = d; ai.target = o; }
         }
       }
@@ -588,9 +625,15 @@ export class Host {
         if (!ai.goal || Math.hypot(ai.goal[0] - cx, ai.goal[1] - cz) > cr * 0.6) ai.goal = pointNear(w, cx, cz, cr * 0.5);
       } else {
         let best = 35, goal = null;
+        for (const c of this.crates) {
+          if (c.taken || c.land - this.tm > 4 || Math.hypot(c.x - cx, c.z - cz) > cr) continue;
+          const d = Math.hypot(c.x - e.x, c.z - e.z);
+          if (d < 55) { best = d; goal = [c.x, c.z]; }
+        }
         for (const p of w.pickups) {
           if (this.taken.has(p.i)) continue;
           if (p.type === S.PICK_TOWEL && e.hp > 80) continue;
+          if (p.type === S.PICK_SHIELD && e.shield >= S.SHIELD_MAX) continue;
           if (Math.hypot(p.x - cx, p.z - cz) > cr) continue;
           const d = Math.hypot(p.x - e.x, p.z - e.z);
           if (d < best) { best = d; goal = [p.x, p.z]; }

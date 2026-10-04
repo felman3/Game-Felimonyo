@@ -23,7 +23,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   let spectate = null;
   let roster = [];
   const me = {
-    playing: false, alive: false, hp: S.MAX_HP, ammo: [0, 0, 0], weapon: 0, kills: 0, lastFire: -9, place: 0,
+    playing: false, alive: false, hp: S.MAX_HP, shield: 0, ammo: [0, 0, 0], weapon: 0, kills: 0, lastFire: -9, place: 0,
     x: 0, y: 0, z: 0, vy: 0, yaw: 0, ground: false, umbrella: false, dashT: 0, dashCd: 0, ddx: 0, ddz: 0
   };
   let lastAim = null;
@@ -37,6 +37,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   let hostId = 'h';
   let roomInfo = { quick: false, code: '' };
   const taken = new Set();
+  const crates = new Map();
+  let meHidden = false;
 
   const now = () => performance.now() / 1000;
   const matchTime = () => now() + clockOff;
@@ -63,6 +65,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       case 'sp': onSplash(m); break;
       case 'ko': onKO(m); break;
       case 'pk': onPickup(m); break;
+      case 'crate': onCrate(m); break;
+      case 'crateTaken': onCrateTaken(m); break;
       case 'over': onOver(m); break;
       case 'feed': feed(m.text); break;
       case 'note': centerMsg(m.text, 3); break;
@@ -123,6 +127,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   function clearMatch() {
     R.clearAvatars();
     R.clearShots();
+    R.clearCrates();
+    crates.clear();
+    R.setInBush(false);
+    meHidden = false;
     R.setAim(null);
     shots.clear();
     hostShot.clear();
@@ -157,7 +165,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     const mine = m.roster.find((r) => r.id === myId);
     me.playing = !!mine;
     me.alive = me.playing;
-    Object.assign(me, { hp: S.MAX_HP, ammo: [0, 0, 0], weapon: 0, kills: 0, lastFire: -9, place: 0, vy: 0, dashT: 0, dashCd: 0, ground: false, umbrella: true });
+    Object.assign(me, { hp: S.MAX_HP, shield: 0, ammo: [0, 0, 0], weapon: 0, kills: 0, lastFire: -9, place: 0, vy: 0, dashT: 0, dashCd: 0, ground: false, umbrella: true });
     if (mine) {
       me.x = mine.x; me.z = mine.z; me.y = S.DROP_Y; me.yaw = Math.atan2(-mine.x, -mine.z);
       R.follow(me.x, me.y, me.z, true);
@@ -207,6 +215,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     if (m.me) {
       if (now() - me.lastFire > 0.4) { me.ammo[1] = m.me.a[0]; me.ammo[2] = m.me.a[1]; }
       me.kills = m.me.k;
+      me.shield = m.me.s || 0;
       if (me.weapon > 0 && me.ammo[me.weapon] <= 0) me.weapon = 0;
     }
   }
@@ -261,6 +270,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       const e = ents.get(id);
       if (!e) continue;
       if (id === myId) {
+        const src = ents.get(m.o);
+        if (src && src.id !== myId) hitFrom(src.x - me.x, src.z - me.z);
         sfx.hurt();
         R.addShake(0.35);
         flash();
@@ -307,6 +318,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     const p = world.pickups[m.i];
     sfx.pickup();
     if (p.type === S.PICK_TOWEL) floatText(myPos(), '+' + S.TOWEL_HEAL + ' dry', 'heal');
+    else if (p.type === S.PICK_SHIELD) floatText(myPos(), '+Bubble shield 🫧', 'heal');
     else {
       const w = p.type === S.PICK_SOAKER ? S.W_SOAKER : S.W_MEGA;
       me.ammo[w] = Math.min(S.WEAPONS[w].max, me.ammo[w] + S.WEAPONS[w].pick);
@@ -340,8 +352,27 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     if (me.playing && mine) saveStats(won, mine[2], mine[1]);
     $('result-title').textContent = won ? 'Winner winner, splash dinner! 🏆' : winner ? winner.name + ' wins! 🏆' : 'Everyone got soaked!';
     $('result-place').textContent = mine ? (won ? 'Last one dry! ' : 'You placed #' + mine[2] + '. ') + 'Soaked ' + mine[1] + ' player' + (mine[1] === 1 ? '' : 's') + '.' : 'You watched this round.';
-    const top = m.stats.slice().sort((a, b) => b[1] - a[1]).slice(0, 3).filter((s) => s[1] > 0);
-    $('result-stats').textContent = top.length ? 'Most splashes: ' + top.map((s) => (ents.get(s[0]) || {}).name + ' (' + s[1] + ')').join(', ') : '';
+    // Everyone, best place first (players still dry when the round was called share the top spots).
+    const rows = m.stats.slice().sort((a, b) => (a[2] || 1.5) - (b[2] || 1.5) || b[1] - a[1]);
+    const table = $('result-table');
+    table.textContent = '';
+    rows.forEach((s) => {
+      const e = ents.get(s[0]) || { name: '?', color: '#ccc' };
+      const tr = document.createElement('tr');
+      if (s[0] === myId) tr.className = 'me';
+      const place = document.createElement('td');
+      place.textContent = s[2] === 1 ? '🏆' : s[2] ? '#' + s[2] : '—';
+      const name = document.createElement('td');
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = e.color;
+      name.append(dot, document.createTextNode(' ' + e.name + (e.bot ? ' 🤖' : '')));
+      const k = document.createElement('td');
+      k.textContent = s[1] + ' 💦';
+      tr.append(place, name, k);
+      table.append(tr);
+    });
+    $('result-stats').textContent = '';
     setTimeout(() => { if (phase === 'over') show('results'); }, 1800);
   }
 
@@ -387,10 +418,39 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     return p;
   }
 
+  // Others in bushes vanish unless they just threw something or you're right next to them.
+  // Spectators see everyone.
+  function isHidden(e) {
+    if (!e.alive || !(me.playing && me.alive) || (e.f & 128)) return false;
+    if (Math.hypot(e.x - me.x, e.z - me.z) < S.SEE_HIDDEN) return false;
+    return !!S.inBush(world, e.x, e.z);
+  }
+
+  function onCrate(m) {
+    if (!world) return;
+    crates.set(m.id, m);
+    R.addCrate(m.id, m.x, m.z, S.groundHeight(world, m.x, m.z));
+    centerMsg('📦 A supply drop is falling! Check the map', 3);
+    feed('📦 Supply drop incoming!');
+    sfx.beep(true);
+  }
+
+  function onCrateTaken(m) {
+    crates.delete(m.id);
+    R.removeCrate(m.id);
+    const e = ents.get(m.by);
+    if (m.by === myId) {
+      sfx.win();
+      floatText(myPos(), '🌟 Golden loot!', 'pick');
+      me.lastFire = Math.min(me.lastFire, now() - 0.5);
+      updateSlots();
+    } else if (e) feed(e.name + ' grabbed the supply drop 📦');
+  }
+
   function nearestEnemy(range) {
     let best = null, bd = range;
     for (const e of ents.values()) {
-      if (e.id === myId || !e.alive) continue;
+      if (e.id === myId || !e.alive || e.hidden) continue;
       const d = Math.hypot(e.x - me.x, e.z - me.z);
       if (d < bd) { bd = d; best = e; }
     }
@@ -538,19 +598,31 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
         if (!me.alive) e.alive = false;
         R.updateAvatar(e.id, {
           x: me.x, y: me.y, z: me.z, yaw: me.yaw, moving: me.moving, dash: me.dashT > 0, alive: me.alive,
-          hp: me.hp, umbrella: me.umbrella, weapon: me.weapon
+          hp: me.hp, umbrella: me.umbrella, weapon: me.weapon, shield: me.shield > 0
         }, dt, S.groundHeight(world, me.x, me.z));
       } else {
         const px = e.x, pz = e.z;
         interp(e, rt);
         const moving = Math.hypot(e.x - px, e.z - pz) > dt * 1.5;
+        e.hidden = isHidden(e);
         R.updateAvatar(e.id, {
           x: e.x, y: e.y, z: e.z, yaw: e.yaw, moving, dash: !!(e.f & 2), alive: e.alive, hp: e.hp,
-          umbrella: !!(e.f & 8), weapon: (e.f >> 4) & 3
+          umbrella: !!(e.f & 8), weapon: (e.f >> 4) & 3, shield: !!(e.f & 64), hidden: e.hidden
         }, dt, S.groundHeight(world, e.x, e.z));
       }
     }
     stepShots(t, dt);
+
+    // Hiding in a bush.
+    const hiddenNow = me.playing && me.alive && !!S.inBush(world, me.x, me.z) && now() - me.lastFire > S.HIDE_AFTER;
+    if (hiddenNow !== meHidden) {
+      meHidden = hiddenNow;
+      R.setInBush(hiddenNow);
+      $('hidden-pill').hidden = !hiddenNow;
+    }
+
+    // Supply drops falling.
+    for (const c of crates.values()) R.updateCrate(c.id, 1 - (c.land - t) / S.CRATE_FALL, time);
 
     // Storm.
     S.stormAt(storm, Math.max(0, t), stormNow);
@@ -607,8 +679,9 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     $('kills').textContent = '💦 ' + me.kills;
     const hp = Math.max(0, Math.round(me.hp));
     $('hp-fill').style.width = hp + '%';
+    $('hp-shield').style.width = Math.min(100, (me.shield / S.SHIELD_MAX) * 100) + '%';
     $('hp-fill').classList.toggle('low', hp < 35);
-    $('hp-text').textContent = me.playing ? 'Dryness ' + hp : 'Spectating';
+    $('hp-text').textContent = me.playing ? 'Dryness ' + hp + (me.shield > 0 ? ' + 🫧' + Math.ceil(me.shield) : '') : 'Spectating';
     let txt;
     if (t < S.DROP_TIME) txt = '☂️ Floating down…';
     else if (stormNow.phase >= storm.phases.length) txt = '⛈️ Final storm!';
@@ -633,7 +706,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       const el = e.label;
       const alive = e.id === myId ? me.alive : e.alive;
       const pos = e.id === myId ? me : e;
-      const p = alive ? R.toScreen(pos.x, pos.y + 2.9, pos.z) : null;
+      const p = alive && !e.hidden ? R.toScreen(pos.x, pos.y + 2.9, pos.z) : null;
       if (e.emoteT > 0) e.emoteT -= dt;
       if (!p || p.x < -50 || p.y < -50 || p.x > innerWidth + 50 || p.y > innerHeight + 50) {
         if (el.style.display !== 'none') el.style.display = 'none';
@@ -698,6 +771,15 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     setTimeout(() => el.remove(), 1000);
   }
 
+  // A red wedge at the edge of the screen pointing to whoever splashed you.
+  function hitFrom(dx, dz) {
+    const el = document.createElement('div');
+    el.className = 'hit-dir';
+    el.style.transform = 'rotate(' + Math.atan2(dx, -dz) + 'rad)';
+    $('hit-dirs').append(el);
+    setTimeout(() => el.remove(), 900);
+  }
+
   function flash() {
     const el = $('hit-vignette');
     el.classList.remove('on');
@@ -736,6 +818,14 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       mctx.strokeStyle = '#ffffff';
       mctx.lineWidth = 1.5;
       mctx.stroke();
+    }
+    for (const cr of crates.values()) {
+      const x = toMap(cr.x), y = toMap(cr.z);
+      mctx.fillStyle = '#ffd84d';
+      mctx.strokeStyle = '#2b2340';
+      mctx.lineWidth = 1.5;
+      mctx.fillRect(x - 4, y - 4, 8, 8);
+      mctx.strokeRect(x - 4, y - 4, 8, 8);
     }
     const c = me.playing && me.alive ? me : (spectate && ents.get(spectate));
     if (c) {
@@ -854,6 +944,12 @@ function drawIslandMap(w) {
     }
   }
   g.putImageData(img, 0, 0);
+  g.fillStyle = 'rgba(40,110,50,0.8)';
+  for (const b of w.bushes) {
+    g.beginPath();
+    g.arc(b.x / 260 * N + N / 2, b.z / 260 * N + N / 2, Math.max(1, b.r / 260 * N), 0, Math.PI * 2);
+    g.fill();
+  }
   g.fillStyle = 'rgba(110,90,80,0.9)';
   for (const o of w.obstacles) {
     if (o.k !== 'house') continue;

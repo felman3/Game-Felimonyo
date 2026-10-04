@@ -38,6 +38,13 @@ export const WEAPONS = [
 export const PICK_SOAKER = 0;
 export const PICK_MEGA = 1;
 export const PICK_TOWEL = 2;
+export const PICK_SHIELD = 3;
+export const SHIELD_PICK = 40;    // a bubble soaks up this much water
+export const SHIELD_MAX = 60;
+export const HIDE_AFTER = 1.5;    // seconds after throwing before a bush hides you again
+export const SEE_HIDDEN = 5;      // you can always spot someone this close
+export const CRATE_TIMES = [64, 134]; // match seconds when supply drops start falling
+export const CRATE_FALL = 12;
 
 // Storm plan: [seconds before it shrinks, seconds to shrink, new radius, wetness per second once it starts]
 export const STORM_PLAN = [
@@ -180,11 +187,23 @@ export function buildWorld(seed) {
     }
   }
 
-  for (let n = 0, tries = 0; n < 80 && tries < 2000; tries++) {
+  // Bushes: walk in to hide. They don't block movement or water.
+  w.bushes = [];
+  for (let n = 0, tries = 0; n < 48 && tries < 1500; tries++) {
+    const p = randomLand(10, 0.6);
+    if (!p) continue;
+    const r = 1.6 + R() * 0.8;
+    if (!free(p[0], p[1], r)) continue;
+    if (w.bushes.some((b) => Math.hypot(b.x - p[0], b.z - p[1]) < b.r + r + 1)) continue;
+    w.bushes.push({ x: p[0], z: p[1], r, y0: groundHeight(w, p[0], p[1]), v: R() });
+    n++;
+  }
+
+  for (let n = 0, tries = 0; n < 84 && tries < 2000; tries++) {
     const p = randomLand(6, 0.4);
     if (!p || !free(p[0], p[1], 0.6)) continue;
     const roll = R();
-    const type = roll < 0.35 ? PICK_SOAKER : roll < 0.6 ? PICK_MEGA : PICK_TOWEL;
+    const type = roll < 0.3 ? PICK_SOAKER : roll < 0.52 ? PICK_MEGA : roll < 0.82 ? PICK_TOWEL : PICK_SHIELD;
     w.pickups.push({ i: w.pickups.length, x: p[0], z: p[1], y: groundHeight(w, p[0], p[1]), type });
     n++;
   }
@@ -205,6 +224,11 @@ export function groundHeight(w, x, z) {
 }
 
 export const onLand = (w, x, z) => groundHeight(w, x, z) > 0.15;
+
+export function inBush(w, x, z) {
+  for (const b of w.bushes) if (Math.abs(b.x - x) < b.r && Math.abs(b.z - z) < b.r && Math.hypot(b.x - x, b.z - z) < b.r * 0.85) return b;
+  return null;
+}
 
 // Obstacles near a point, each listed once.
 export function nearObstacles(w, x, z, rad, out) {

@@ -55,6 +55,7 @@ export function createRenderer(canvas, { mobile }) {
     scene.add(worldGroup);
     worldGroup.add(buildTerrain(w));
     buildObstacles(w, worldGroup);
+    buildBushes(w, worldGroup);
     pickupMeshes = w.pickups.map((p) => {
       const m = makePickup(p.type);
       m.position.set(p.x, p.y, p.z);
@@ -172,6 +173,32 @@ export function createRenderer(canvas, { mobile }) {
     }
   }
 
+  const bushMat = lambert('#3f9e4a', { transparent: true, opacity: 1 });
+  function buildBushes(w, group) {
+    const blobs = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), bushMat, w.bushes.length * 4);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+    let i = 0;
+    for (const b of w.bushes) {
+      const parts = [[0, 0, 1], [0.55, 0.3, 0.7], [-0.5, -0.35, 0.72], [0.1, -0.6, 0.65]];
+      for (const [ox, oz, k] of parts) {
+        const r = b.r * k;
+        q.setFromAxisAngle(UP, b.v * 6 + ox);
+        m4.compose(p.set(b.x + ox * b.r * 0.7, b.y0 + r * 0.75, b.z + oz * b.r * 0.7), q, s.set(r, r * 1.05, r));
+        blobs.setMatrixAt(i, m4);
+        blobs.setColorAt(i, c.set(b.v < 0.5 ? '#3f9e4a' : '#4aab52').offsetHSL(0, 0, ox * 0.04));
+        i++;
+      }
+    }
+    blobs.castShadow = true;
+    blobs.receiveShadow = true;
+    group.add(blobs);
+  }
+  // See-through bushes while you're inside one, so you can tell you're hidden.
+  function setInBush(on) {
+    bushMat.opacity = on ? 0.45 : 1;
+    bushMat.depthWrite = !on;
+  }
+
   function makePickup(type) {
     const g = new THREE.Group();
     const item = new THREE.Group();
@@ -190,6 +217,11 @@ export function createRenderer(canvas, { mobile }) {
       const knot = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.2, 6), lambert('#8a45e0'));
       knot.position.y = -0.6; knot.rotation.x = Math.PI;
       item.add(b, knot);
+    } else if (type === S.PICK_SHIELD) {
+      const b = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), lambert('#9fe8ff', { transparent: true, opacity: 0.6 }));
+      const shine = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), lambert('#ffffff'));
+      shine.position.set(-0.18, 0.2, 0.32);
+      item.add(b, shine);
     } else {
       const a = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.14, 0.6), lambert('#ff7aa8'));
       const b2 = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.14, 0.6), lambert('#ffffff'));
@@ -200,7 +232,7 @@ export function createRenderer(canvas, { mobile }) {
     }
     item.position.y = 1;
     item.traverse((m) => { m.castShadow = true; });
-    const glow = new THREE.Mesh(new THREE.RingGeometry(0.7, 0.95, 20), new THREE.MeshBasicMaterial({ color: type === S.PICK_TOWEL ? '#ffd1e3' : type === S.PICK_MEGA ? '#e2c9ff' : '#ffe2b8', transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+    const glow = new THREE.Mesh(new THREE.RingGeometry(0.7, 0.95, 20), new THREE.MeshBasicMaterial({ color: type === S.PICK_TOWEL ? '#ffd1e3' : type === S.PICK_MEGA ? '#e2c9ff' : type === S.PICK_SHIELD ? '#c9f3ff' : '#ffe2b8', transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
     glow.rotation.x = -Math.PI / 2;
     glow.position.y = 0.08;
     g.add(item, glow);
@@ -370,6 +402,11 @@ export function createRenderer(canvas, { mobile }) {
     umbrella.visible = false;
     root.add(umbrella);
 
+    const bubble = new THREE.Mesh(new THREE.SphereGeometry(1.25, 18, 12), new THREE.MeshLambertMaterial({ color: '#a8ecff', transparent: true, opacity: 0.32, depthWrite: false }));
+    bubble.position.y = 1.05;
+    bubble.visible = false;
+    root.add(bubble);
+
     const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.75, 16), new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.22, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
     scene.add(shadow);
@@ -377,7 +414,7 @@ export function createRenderer(canvas, { mobile }) {
     root.traverse((m) => { if (m.isMesh) m.castShadow = true; });
     scene.add(root);
     const a = {
-      id, root, body, mat, base, eyes, cheeks, footL, footR, handL, handR, held, umbrella, shadow, hat: hatObj.g, prop: hatObj.spin,
+      id, root, body, mat, base, eyes, cheeks, footL, footR, handL, handR, held, umbrella, shadow, hat: hatObj.g, prop: hatObj.spin, bubble,
       phase: Math.random() * 6, yaw: 0, throwT: 0, hitT: 0, deadT: -1, hp: S.MAX_HP, dripT: 0, landT: 0, wasAir: false
     };
     avatars.set(id, a);
@@ -397,10 +434,14 @@ export function createRenderer(canvas, { mobile }) {
   const WET = new THREE.Color('#2f5f9e');
   const tmpC = new THREE.Color();
 
-  // st: { x, y, z, yaw, moving, dash, alive, hp, umbrella, weapon, ground }
+  // st: { x, y, z, yaw, moving, dash, alive, hp, umbrella, weapon, shield, hidden }
   function updateAvatar(id, st, dt, gh) {
     const a = avatars.get(id);
     if (!a) return;
+    if (st.hidden) { a.root.visible = false; a.shadow.visible = false; return; }
+    if (st.alive && !a.root.visible) a.root.visible = true;
+    a.bubble.visible = !!st.shield && st.alive;
+    if (a.bubble.visible) a.bubble.scale.setScalar(1 + Math.sin(a.phase * 0.7) * 0.03);
     a.root.position.set(st.x, st.y, st.z);
     let dy = st.yaw - a.yaw;
     while (dy > Math.PI) dy -= Math.PI * 2;
@@ -663,6 +704,53 @@ export function createRenderer(canvas, { mobile }) {
     }
   }
 
+  /* ---------- Supply drops ---------- */
+  const crates = new Map();
+  function addCrate(id, x, z, gh) {
+    removeCrate(id);
+    const g = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.3, 1.6), lambert('#d99a55'));
+    box.position.y = 0.65;
+    const band1 = new THREE.Mesh(new THREE.BoxGeometry(1.66, 0.22, 1.66), lambert('#ffd84d'));
+    band1.position.y = 0.65;
+    const band2 = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.36, 1.66), lambert('#ffd84d'));
+    band2.position.y = 0.65;
+    const top = new THREE.Group();
+    const cols = ['#ff6b8b', '#ffd84d', '#40c4ff', '#5fd68a', '#b06bff'];
+    cols.forEach((c, i) => {
+      const a = (i / cols.length) * Math.PI * 2;
+      const b = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), lambert(c));
+      b.scale.y = 1.15;
+      b.position.set(Math.cos(a) * 0.6, 3.6 + (i % 2) * 0.35, Math.sin(a) * 0.6);
+      const string = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 2.4, 3), lambert('#ffffff'));
+      string.position.set(Math.cos(a) * 0.3, 2.3, Math.sin(a) * 0.3);
+      top.add(b, string);
+    });
+    g.add(box, band1, band2, top);
+    g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 60, 12, 1, true), new THREE.MeshBasicMaterial({ color: '#ffe066', transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.set(x, gh + 30, z);
+    scene.add(g, beam);
+    crates.set(id, { g, beam, top, x, z, gh });
+  }
+  // f: 0 = still high up, 1 = landed
+  function updateCrate(id, f, time) {
+    const c = crates.get(id);
+    if (!c) return;
+    const h = (1 - Math.min(1, f)) * 55;
+    c.g.position.set(c.x + Math.sin(time * 1.3) * (h > 0 ? 0.6 : 0), c.gh + h, c.z);
+    c.g.rotation.y = time * 0.4;
+    c.top.visible = f < 1;
+    c.beam.material.opacity = 0.18 + Math.sin(time * 4) * 0.08;
+  }
+  function removeCrate(id) {
+    const c = crates.get(id);
+    if (!c) return;
+    scene.remove(c.g, c.beam);
+    crates.delete(id);
+  }
+  function clearCrates() { for (const id of [...crates.keys()]) removeCrate(id); }
+
   /* ---------- Storm ---------- */
   const stormTex = (() => {
     const c = document.createElement('canvas');
@@ -870,7 +958,8 @@ export function createRenderer(canvas, { mobile }) {
 
   return {
     setWorld, setPickupTaken, addAvatar, removeAvatar, clearAvatars, updateAvatar, avatarThrow, avatarHit,
-    addShot, moveShot, removeShot, clearShots, splash, smallSplash, setStorm, setAim,
+    addShot, moveShot, removeShot, clearShots, splash, smallSplash, setStorm, setAim, setInBush,
+    addCrate, updateCrate, removeCrate, clearCrates,
     follow, setOrbit, addShake, render, groundAt, toScreen, resize
   };
 }

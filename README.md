@@ -8,7 +8,11 @@ No installs, no accounts, no payments, no game server.
 
 - **Quick Play** puts you on a public island with whoever else is looking for a match. After 20 seconds the match starts, and bots fill the empty spots so it's fun even alone.
 - **Create room** makes a private room with a code and an invite link for friends (up to 12 people). The person who made it presses **Start**, and can turn bots on or off.
-- **Weapons:** water balloons (unlimited, arc over walls), **Soakers** (rapid fire, stopped by walls) and **Mega balloons** (huge splash). **Towels** dry you off.
+- **Practice** plays a match against bots straight away, even without internet.
+- **Weapons:** water balloons (unlimited, arc over walls), **Soakers** (rapid fire, stopped by walls) and **Mega balloons** (huge splash). **Towels** dry you off and **Bubbles** soak up the next splashes for you.
+- **Bushes** hide you from everyone until you throw something or someone walks right up to you.
+- **Supply drops** float down into the safe zone twice a match. Whoever reaches one first gets full dryness, a bubble and lots of ammo.
+- **Hats:** cap, crown, bunny ears, flower, propeller, party hat, frog and duck.
 - **The storm** shrinks in 5 stages. Outside the circle the rain soaks you a little more every second.
 - **Last one dry wins.** You can watch the rest of the match after you're out, and a new round starts automatically.
 - Name tags, dryness bars, a minimap, a kill feed, emotes (👋 😂 😎 …), splash effects, sounds and screen shake.
@@ -61,14 +65,13 @@ To try it on your own computer: `npx serve .` in this folder and open the addres
 
 ## Good to know
 
-- **If the host leaves, the match ends** for everyone on that island, and the others can press **Find another match**. If the host's tab is in the background the match keeps running, but their own character stands still.
+- **If the host leaves, the match carries on.** The player who has been in the room longest takes over as host and everyone reconnects automatically, keeping their character, dryness and ammo. If the host's tab is in the background the match keeps running, but their own character stands still.
 - **Up to 12 people per room**, and as many rooms as you like. Bigger matches would need a paid game server.
 - **The free PeerJS server** is a shared community service with no uptime guarantee. If the game gets popular, run your own PeerServer (free, open source) and put its address in `peerOptions` in `config.js`.
 - **It's a friendly game, not an esport.** Each browser reports its own position, so someone determined could cheat in their own rooms.
 
 ## Ideas for later
 
-- Pass hosting to another player when the host leaves
 - More islands (snow, candy, beach town) and weapons (sprinklers, water bombs)
 - Teams (duos and squads)
 - Character hats and skins
