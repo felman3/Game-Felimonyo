@@ -77,28 +77,35 @@ export function connectTo(peer, id, timeoutMs) {
     const timer = setTimeout(() => finish(err('timeout')), timeoutMs || 9000);
     peer.on('error', onErr);
     c.on('open', () => finish());
+    c.on('close', () => finish(err('missing')));
     c.on('error', (e) => finish(e));
   });
 }
 
 // Say hello to a host and wait for its answer.
-function handshake(conn, profile) {
+function handshake(conn, profile, extra) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { conn.off('data', onData); reject(err('timeout')); }, 6000);
+    const done = () => { clearTimeout(timer); conn.off('data', onData); conn.off('close', onClose); };
+    const timer = setTimeout(() => { done(); reject(err('timeout')); }, 6000);
+    // Closed before saying hello back (a host that's shutting down): give up right away.
+    const onClose = () => { done(); reject(err('missing')); };
     const onData = (m) => {
       if (!m || (m.t !== 'welcome' && m.t !== 'full')) return;
-      clearTimeout(timer);
-      conn.off('data', onData);
+      done();
       if (m.t === 'full') reject(err('full'));
       else resolve(m);
     };
     conn.on('data', onData);
-    conn.send({ t: 'hi', name: profile.name, color: profile.color, v: 1 });
+    conn.on('close', onClose);
+    conn.send(Object.assign({ t: 'hi', name: profile.name, color: profile.color, hat: profile.hat, v: 1 }, extra));
   });
 }
 
 const quickId = (n) => CFG.idPrefix + 'qp-' + n;
 export const roomId = (code) => CFG.idPrefix + 'room-' + code.toLowerCase();
+
+// The PeerJS id a room's host registers under.
+export const peerIdFor = (code) => (/^qp-\d+$/.test(code) ? quickId(code.slice(3)) : roomId(code));
 
 export function newRoomCode() {
   const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -108,10 +115,10 @@ export function newRoomCode() {
 }
 
 // Join a host by its peer id. Resolves { peer, conn, welcome }.
-async function joinId(peer, id, profile) {
+export async function joinId(peer, id, profile, extra) {
   const conn = await connectTo(peer, id);
   try {
-    const welcome = await handshake(conn, profile);
+    const welcome = await handshake(conn, profile, extra);
     return { conn, welcome };
   } catch (e) {
     try { conn.close(); } catch (x) { /* ignore */ }

@@ -217,7 +217,86 @@ export function createRenderer(canvas, { mobile }) {
   const avatars = new Map();
   const sphere = (r, color, ws, hs) => new THREE.Mesh(new THREE.SphereGeometry(r, ws || 10, hs || 8), lambert(color));
 
-  function addAvatar(id, color) {
+  // Little hats, all sitting on top of the head (about y = 2).
+  function makeHat(kind, color) {
+    const g = new THREE.Group();
+    const add = (m, x, y, z) => { m.position.set(x, y, z); g.add(m); return m; };
+    const accent = new THREE.Color(color).offsetHSL(0.5, 0, 0).getStyle();
+    let spin = null;
+    switch (S.HATS[kind] && S.HATS[kind].id) {
+      case 'cap': {
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), lambert(accent)), 0, 1.78, 0).scale.set(1.05, 0.7, 1.05);
+        add(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.05, 0.42), lambert(accent)), 0, 1.8, 0.5);
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), lambert('#ffffff')), 0, 2.13, 0);
+        break;
+      }
+      case 'crown': {
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.34, 0.26, 7, 1, true), lambert('#ffd84d', { side: THREE.DoubleSide })), 0, 2.02, 0);
+        for (let i = 0; i < 7; i++) {
+          const a = (i / 7) * Math.PI * 2;
+          add(new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.18, 4), lambert('#ffd84d')), Math.sin(a) * 0.35, 2.24, Math.cos(a) * 0.35);
+        }
+        add(new THREE.Mesh(new THREE.OctahedronGeometry(0.07), lambert('#ff4f82')), 0, 2.03, 0.36);
+        break;
+      }
+      case 'bunny': {
+        for (const sx of [-1, 1]) {
+          const ear = add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), lambert('#ffffff')), sx * 0.22, 2.32, -0.05);
+          ear.scale.set(0.16, 0.5, 0.1);
+          ear.rotation.z = -sx * 0.18;
+          const inner = add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), lambert('#ffb3cb')), sx * 0.22, 2.32, 0.0);
+          inner.scale.set(0.09, 0.38, 0.06);
+          inner.rotation.z = -sx * 0.18;
+        }
+        break;
+      }
+      case 'flower': {
+        const cx = 0.3, cy = 1.9, cz = 0.25;
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          add(new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 4), lambert('#ff8fb8')), cx + Math.cos(a) * 0.12, cy + Math.sin(a) * 0.12, cz);
+        }
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 4), lambert('#ffd84d')), cx, cy, cz + 0.04);
+        break;
+      }
+      case 'propeller': {
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), lambert('#ff4f82')), 0, 1.84, 0).scale.y = 0.6;
+        add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.22, 5), lambert('#555555')), 0, 2.2, 0);
+        spin = new THREE.Group();
+        spin.add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.03, 0.14), lambert('#ffd84d')));
+        spin.add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.03, 0.9), lambert('#40c4ff')));
+        add(spin, 0, 2.32, 0);
+        break;
+      }
+      case 'party': {
+        const cone = add(new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.62, 10), lambert(accent)), 0.08, 2.22, 0);
+        cone.rotation.z = -0.15;
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), lambert('#ffffff')), 0.13, 2.55, 0);
+        add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.035, 5, 12), lambert('#ffffff')), 0.06, 2.05, 0).rotation.x = Math.PI / 2;
+        break;
+      }
+      case 'frog': {
+        for (const sx of [-1, 1]) {
+          add(new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), lambert('#5fd68a')), sx * 0.22, 2.02, 0.12);
+          add(new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), lambert('#ffffff')), sx * 0.22, 2.06, 0.24);
+          add(new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 4), lambert('#2b2340')), sx * 0.22, 2.07, 0.32);
+        }
+        break;
+      }
+      case 'duck': {
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), lambert('#ffd84d')), 0, 2.08, -0.05).scale.set(1, 0.75, 1.25);
+        add(new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), lambert('#ffd84d')), 0, 2.3, 0.15);
+        add(new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.14, 6), lambert('#ff9f1c')), 0, 2.28, 0.32).rotation.x = Math.PI / 2;
+        for (const sx of [-1, 1]) add(new THREE.Mesh(new THREE.SphereGeometry(0.025, 5, 4), lambert('#2b2340')), sx * 0.08, 2.34, 0.27);
+        break;
+      }
+      default:
+    }
+    g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+    return { g, spin };
+  }
+
+  function addAvatar(id, color, hat) {
     removeAvatar(id);
     const base = new THREE.Color(color);
     const root = new THREE.Group();
@@ -258,6 +337,8 @@ export function createRenderer(canvas, { mobile }) {
     handL.position.set(-0.7, 0.95, 0.1);
     handR.position.set(0.7, 0.95, 0.1);
     body.add(torso, belly, eyes, cheeks, footL, footR, handL, handR);
+    const hatObj = makeHat(hat | 0, color);
+    body.add(hatObj.g);
 
     // What they hold in their right hand.
     const held = [];
@@ -296,7 +377,7 @@ export function createRenderer(canvas, { mobile }) {
     root.traverse((m) => { if (m.isMesh) m.castShadow = true; });
     scene.add(root);
     const a = {
-      id, root, body, mat, base, eyes, cheeks, footL, footR, handL, handR, held, umbrella, shadow,
+      id, root, body, mat, base, eyes, cheeks, footL, footR, handL, handR, held, umbrella, shadow, hat: hatObj.g, prop: hatObj.spin,
       phase: Math.random() * 6, yaw: 0, throwT: 0, hitT: 0, deadT: -1, hp: S.MAX_HP, dripT: 0, landT: 0, wasAir: false
     };
     avatars.set(id, a);
@@ -338,7 +419,7 @@ export function createRenderer(canvas, { mobile }) {
       const t = Math.min(1, a.deadT * 3);
       a.body.scale.set(1 + t * 0.8, Math.max(0.06, 1 - t), 1 + t * 0.8);
       a.body.position.y = 0;
-      a.eyes.visible = a.cheeks.visible = false;
+      a.eyes.visible = a.cheeks.visible = a.hat.visible = false;
       a.umbrella.visible = false;
       a.mat.color.copy(a.base).lerp(WET, 0.6);
       a.root.visible = a.deadT < 6;
@@ -347,7 +428,7 @@ export function createRenderer(canvas, { mobile }) {
     if (a.deadT >= 0) {
       a.deadT = -1;
       a.root.visible = true;
-      a.eyes.visible = a.cheeks.visible = true;
+      a.eyes.visible = a.cheeks.visible = a.hat.visible = true;
       a.body.scale.set(1, 1, 1);
     }
 
@@ -410,6 +491,7 @@ export function createRenderer(canvas, { mobile }) {
     } else {
       a.handR.position.set(0.55, 1.6, 0.1);
     }
+    if (a.prop) a.prop.rotation.y += dt * (st.moving || air > 0.3 ? 22 : 5);
     a.body.scale.set(sx, sy, sz);
     a.body.position.y = by;
     a.body.rotation.x = lean;

@@ -49,6 +49,18 @@ export const STORM_PLAN = [
 ];
 
 export const COLORS = ['#ff6b8b', '#ffa24d', '#ffd84d', '#5fd68a', '#40c4ff', '#8b7bff', '#ff7ad9', '#f4f1ea'];
+export const HATS = [
+  { id: 'none', label: 'No hat', icon: '🚫' },
+  { id: 'cap', label: 'Cap', icon: '🧢' },
+  { id: 'crown', label: 'Crown', icon: '👑' },
+  { id: 'bunny', label: 'Bunny ears', icon: '🐰' },
+  { id: 'flower', label: 'Flower', icon: '🌸' },
+  { id: 'propeller', label: 'Propeller', icon: '🚁' },
+  { id: 'party', label: 'Party hat', icon: '🎉' },
+  { id: 'frog', label: 'Frog', icon: '🐸' },
+  { id: 'duck', label: 'Duck', icon: '🦆' }
+];
+
 export const BOT_NAMES = ['Splashy', 'Drizzle', 'Puddles', 'Bubbles', 'Soggy Sam', 'Misty', 'Ripple', 'Captain Wet',
   'Nimbus', 'Squirt', 'Wavey', 'Dewdrop', 'Sprinkles', 'Monsoon', 'Droplet', 'Tsunami Tim'];
 

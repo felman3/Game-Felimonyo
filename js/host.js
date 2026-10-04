@@ -27,13 +27,14 @@ function makeTicker(fn) {
 }
 
 export class Host {
-  constructor({ peer, quick, code, profile, deliverLocal, onEnd }) {
+  // takeover: state from the old host's last snapshot, when a player inherits the room.
+  constructor({ peer, quick, code, practice, profile, deliverLocal, localId, takeover }) {
     this.peer = peer;
     this.quick = quick;
     this.code = code;
+    this.practice = !!practice;
     this.deliverLocal = deliverLocal;
-    this.onEnd = onEnd;
-    this.localId = 'h';
+    this.localId = localId || 'h';
     this.members = new Map();   // everyone in the room: id -> { id, name, color, conn, lastHeard, spectator }
     this.ents = new Map();      // everyone in the current match, bots included
     this.phase = 'lobby';
@@ -46,15 +47,72 @@ export class Host {
     this.lobbyT = 0;
     this.countdownEnd = 0;
     this.nextSeed = this.newSeed();
-    this.members.set('h', { id: 'h', name: profile.name, color: profile.color, conn: null, lastHeard: Infinity });
+    this.heirT = 0;
+    this.expect = new Map();     // players of the old host we're waiting to reconnect: id -> deadline
+    this.members.set(this.localId, { id: this.localId, name: profile.name, color: profile.color, hat: cleanHat(profile.hat), conn: null, lastHeard: Infinity });
     peer.on('connection', (c) => this.onConnection(c));
     this.stopTicker = makeTicker(() => this.tick());
-    this.enterLobby();
+    if (takeover) this.takeOver(takeover);
+    else this.enterLobby();
+  }
+
+  // Carry on where the old host left off.
+  takeOver(st) {
+    const now = performance.now();
+    let maxId = 0;
+    for (const r of st.roster || []) {
+      const n = /^p(\d+)$/.exec(r.id);
+      if (n) maxId = Math.max(maxId, +n[1]);
+      if (!r.bot && r.id !== this.localId && r.id !== st.oldHost) this.expect.set(r.id, now + 15000);
+    }
+    this.nextId = maxId + 1;
+    if (st.phase === 'lobby' || !st.seed || !st.roster) {
+      this.enterLobby();
+      return;
+    }
+    this.seed = st.seed;
+    this.nextSeed = st.seed;
+    this.world = S.buildWorld(st.seed);
+    this.storm = S.buildStorm(st.seed);
+    this.tm = st.tm;
+    this.taken = new Set(st.taken || []);
+    this.projs = [];
+    this.humanlessT = 0;
+    this.roster = st.roster;
+    const byId = new Map(st.ents.map((e) => [e.id, e]));
+    for (const r of st.roster) {
+      const s = byId.get(r.id) || { x: r.x, y: 0, z: r.z, hp: 0, alive: false, kills: 0 };
+      const e = this.makeEnt(r, s.x, s.z);
+      Object.assign(e, { y: s.y, yaw: s.yaw || 0, hp: s.hp, alive: s.alive, kills: s.kills || 0, umbrella: false, ground: true });
+      if (r.id === this.localId) e.ammo = [0, st.myAmmo[0] | 0, st.myAmmo[1] | 0];
+      if (r.bot) e.ammo = [0, 20, 0];
+      if (!e.alive) e.place = 0;
+      this.ents.set(r.id, e);
+    }
+    // The old host is gone for good.
+    for (const e of this.ents.values()) {
+      if (!e.bot && e.id !== this.localId && !this.expect.has(e.id) && e.alive) this.knockOut(e, null, true);
+    }
+    this.phase = st.phase === 'over' ? 'over' : 'match';
+    this.overEnd = now + 3000;
+    for (const e of this.ents.values()) if (!e.alive && !e.place) e.place = this.ents.size;
+  }
+
+  makeEnt(p, x, z) {
+    return {
+      id: p.id, name: p.name, color: p.color, hat: p.hat || 0, bot: p.bot,
+      x, z, y: S.DROP_Y, vy: 0, yaw: Math.atan2(-x, -z), ground: false, umbrella: true,
+      dashT: 0, dashCd: 0, ddx: 0, ddz: 0,
+      hp: S.MAX_HP, alive: true, ammo: [0, 0, 0], lastFire: -9, kills: 0, place: 0, f: 0,
+      px: x, pz: z, vx: 0, vz: 0,
+      ai: p.bot ? newBrain() : null
+    };
   }
 
   newSeed() { return (Math.random() * 2147483647) | 0; }
 
   destroy() {
+    this.dead = true;
     this.stopTicker();
     for (const m of this.members.values()) {
       if (m.conn) { try { m.conn.send({ t: 'bye' }); } catch (e) { /* ignore */ } }
@@ -75,9 +133,11 @@ export class Host {
   }
 
   onConnection(c) {
+    // Closing down: don't take anyone in, or they'd reconnect to a host that's about to vanish.
+    if (this.dead) { setTimeout(() => { try { c.close(); } catch (e) { /* ignore */ } }, 50); return; }
     let id = null;
     c.on('data', (msg) => {
-      if (!msg || typeof msg !== 'object') return;
+      if (!msg || typeof msg !== 'object' || this.dead) return;
       if (!id) {
         if (msg.t !== 'hi') return;
         const humans = this.members.size;
@@ -86,14 +146,27 @@ export class Host {
           setTimeout(() => { try { c.close(); } catch (e) { /* ignore */ } }, 500);
           return;
         }
-        id = 'p' + this.nextId++;
+        // Someone from before the old host left: give them their old place back.
+        const back = msg.rejoin && this.expect.has(msg.rejoin) && !this.members.has(msg.rejoin) ? msg.rejoin : null;
+        id = back || 'p' + this.nextId++;
         const m = {
           id, conn: c, lastHeard: performance.now(),
-          name: cleanName(msg.name), color: cleanColor(msg.color),
-          spectator: this.phase !== 'lobby'
+          name: cleanName(msg.name), color: cleanColor(msg.color), hat: cleanHat(msg.hat),
+          spectator: this.phase !== 'lobby' && !(back && this.ents.has(back))
         };
         this.members.set(id, m);
-        c.send({ t: 'welcome', id, quick: this.quick, code: this.code });
+        c.send({ t: 'welcome', id, quick: this.quick, code: this.code, resume: !!back });
+        if (back) {
+          this.expect.delete(back);
+          const e = this.ents.get(back);
+          if (e && Array.isArray(msg.ammo)) {
+            e.ammo[1] = Math.min(S.WEAPONS[1].max, Math.max(0, msg.ammo[0] | 0));
+            e.ammo[2] = Math.min(S.WEAPONS[2].max, Math.max(0, msg.ammo[1] | 0));
+          }
+          this.sendHeirs();
+          if (this.phase === 'lobby') this.sendLobby();
+          return;
+        }
         this.joined(m);
         return;
       }
@@ -116,6 +189,13 @@ export class Host {
       for (const i of this.taken) this.sendTo(m, { t: 'pk', i, by: null });
     }
     this.broadcast({ t: 'feed', text: m.name + ' joined' });
+    this.sendHeirs();
+  }
+
+  // Everyone learns who takes over if this host leaves: the longest-staying player first.
+  sendHeirs() {
+    const l = [...this.members.keys()].filter((id) => id !== this.localId);
+    this.broadcast({ t: 'heirs', l, h: this.localId });
   }
 
   leave(id) {
@@ -129,7 +209,9 @@ export class Host {
     } else if (e) {
       e.left = true;
     }
+    if (this.dead) return;
     this.broadcast({ t: 'feed', text: m.name + ' left' });
+    this.sendHeirs();
     if (this.phase === 'lobby') this.sendLobby();
   }
 
@@ -176,9 +258,9 @@ export class Host {
   }
 
   sendLobby() {
-    const players = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color }));
+    const players = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color, hat: m.hat }));
     const cd = this.countdownEnd ? Math.max(0, Math.ceil((this.countdownEnd - performance.now()) / 1000)) : null;
-    this.broadcast({ t: 'lobby', players, quick: this.quick, code: this.code, cd, bots: this.bots, seed: this.nextSeed, fill: S.FILL_TO });
+    this.broadcast({ t: 'lobby', players, quick: this.quick, code: this.code, cd, bots: this.bots, seed: this.nextSeed, fill: S.FILL_TO, host: this.localId, practice: this.practice });
   }
 
   /* ---------- Match ---------- */
@@ -195,12 +277,15 @@ export class Host {
     this.snapT = 0;
     this.humanlessT = 0;
 
-    const roster = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color, bot: false }));
+    const roster = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color, hat: m.hat, bot: false }));
     if (this.bots || roster.length < 2) {
       const names = shuffle(S.BOT_NAMES.slice());
       let n = 1;
       while (roster.length < Math.max(this.bots ? S.FILL_TO : 2, 2) && roster.length < S.MAX_HUMANS + 4) {
-        roster.push({ id: 'b' + n, name: names[(n - 1) % names.length], color: S.COLORS[Math.floor(Math.random() * S.COLORS.length)], bot: true });
+        roster.push({
+          id: 'b' + n, name: names[(n - 1) % names.length], color: S.COLORS[Math.floor(Math.random() * S.COLORS.length)],
+          hat: Math.random() < 0.6 ? 1 + Math.floor(Math.random() * (S.HATS.length - 1)) : 0, bot: true
+        });
         n++;
       }
     }
@@ -217,14 +302,7 @@ export class Host {
         if (S.onLand(this.world, x, z) && !S.hitsObstacle(this.world, x, z, 1, 1)) break;
       }
       p.x = S.r2(x); p.z = S.r2(z);
-      this.ents.set(p.id, {
-        id: p.id, name: p.name, color: p.color, bot: p.bot,
-        x, z, y: S.DROP_Y, vy: 0, yaw: Math.atan2(-x, -z), ground: false, umbrella: true,
-        dashT: 0, dashCd: 0, ddx: 0, ddz: 0,
-        hp: S.MAX_HP, alive: true, ammo: [0, 0, 0], lastFire: -9, kills: 0, place: 0, f: 0,
-        px: x, pz: z, vx: 0, vz: 0,
-        ai: p.bot ? newBrain() : null
-      });
+      this.ents.set(p.id, this.makeEnt(p, x, z));
     });
     this.roster = roster;
     this.phase = 'match';
@@ -430,6 +508,14 @@ export class Host {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
 
+    this.heirT += dt;
+    if (this.heirT > 3) { this.heirT = 0; this.sendHeirs(); }
+    for (const [id, until] of this.expect) {
+      if (now < until) continue;
+      this.expect.delete(id);
+      const e = this.ents.get(id);
+      if (e && e.alive && this.phase === 'match') { e.left = true; this.knockOut(e, null, true); }
+    }
     for (const m of this.members.values()) {
       if (m.id !== this.localId && now - m.lastHeard > TIMEOUT_MS) {
         try { m.conn.close(); } catch (e) { /* ignore */ }
@@ -624,6 +710,11 @@ function shuffle(a) {
 export function cleanName(s) {
   const n = String(s || '').replace(/[<>]/g, '').trim().slice(0, 16);
   return n || 'Player';
+}
+
+export function cleanHat(h) {
+  h = h | 0;
+  return h >= 0 && h < S.HATS.length ? h : 0;
 }
 
 export function cleanColor(c) {

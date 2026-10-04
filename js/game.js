@@ -18,7 +18,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   const hostShot = new Map(); // host shot id -> our key
   let lid = 0;
   let clockOff = 0, clockSet = false;
-  let sendT = 0, pingT = 0, hudT = 0, mapT = 0;
+  let sendT = 0, hudT = 0, mapT = 0;
   let aliveCount = 0;
   let spectate = null;
   let roster = [];
@@ -33,6 +33,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   let lastStormPhase = -1;
   let lastShrinking = false;
   let destroyed = false;
+  let heirs = [];           // who takes over hosting if the host leaves, in order
+  let hostId = 'h';
+  let roomInfo = { quick: false, code: '' };
+  const taken = new Set();
 
   const now = () => performance.now() / 1000;
   const matchTime = () => now() + clockOff;
@@ -63,6 +67,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       case 'feed': feed(m.text); break;
       case 'note': centerMsg(m.text, 3); break;
       case 'emote': showEmote(m.id, m.e); break;
+      case 'heirs': heirs = m.l || []; hostId = m.h || hostId; break;
       default:
     }
   }
@@ -79,8 +84,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       setRain(0);
     }
     ensureWorld(m.seed);
-    $('lobby-title').textContent = m.quick ? 'Quick Play' : 'Your room';
-    $('room-share').hidden = m.quick;
+    if (m.host) hostId = m.host;
+    roomInfo = { quick: m.quick, code: m.code, practice: m.practice };
+    $('lobby-title').textContent = m.practice ? 'Practice' : m.quick ? 'Quick Play' : 'Your room';
+    $('room-share').hidden = m.quick || m.practice;
     if (!m.quick) $('room-code').textContent = m.code.toUpperCase();
     const list = $('lobby-players');
     list.textContent = '';
@@ -89,7 +96,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       const dot = document.createElement('span');
       dot.className = 'dot';
       dot.style.background = p.color;
-      li.append(dot, document.createTextNode(p.name + (p.id === myId ? ' (you)' : '') + (p.id === 'h' ? ' ⭐' : '')));
+      li.append(dot, document.createTextNode((p.hat ? S.HATS[p.hat].icon + ' ' : '') + p.name + (p.id === myId ? ' (you)' : '') + (p.id === hostId ? ' ⭐' : '')));
       list.append(li);
     }
     const bots = m.bots ? Math.max(0, m.fill - m.players.length) : (m.players.length < 2 ? 1 : 0);
@@ -103,9 +110,12 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     if (m.cd !== null && m.cd !== undefined) {
       status = 'Match starts in ' + m.cd + 's';
       if (m.cd <= 3 && m.cd > 0) sfx.beep(false);
-    } else status = isHost ? 'Press Start when everyone is here.' : 'Waiting for the host to start…';
+    } else status = isHost ? (m.practice ? 'Ready when you are!' : 'Press Start when everyone is here.') : 'Waiting for the host to start…';
     $('lobby-status').textContent = status;
-    $('host-controls').hidden = !(isHost && !m.quick);
+    // Quick Play hosts can start early instead of waiting for the countdown.
+    $('host-controls').hidden = !isHost;
+    $('bots-row').hidden = m.quick || m.practice;
+    $('start').textContent = m.quick ? 'Start now' : 'Start match';
     $('bots-toggle').checked = !!m.bots;
   }
 
@@ -130,6 +140,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     clearMatch();
     ensureWorld(m.seed);
     for (const p of world.pickups) R.setPickupTaken(p.i, false);
+    taken.clear();
     roster = m.roster;
     for (const r of m.roster) {
       const label = document.createElement('div');
@@ -139,9 +150,9 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       $('labels').append(label);
       ents.set(r.id, {
         id: r.id, name: r.name, color: r.color, bot: r.bot, label, buf: [{ t: m.tm || 0, x: r.x, y: S.DROP_Y, z: r.z, yaw: 0 }],
-        x: r.x, y: S.DROP_Y, z: r.z, yaw: 0, hp: S.MAX_HP, alive: true, f: 9, lastHp: S.MAX_HP, emoteT: 0
+        x: r.x, y: S.DROP_Y, z: r.z, yaw: 0, hp: S.MAX_HP, alive: true, f: 9, lastHp: S.MAX_HP, emoteT: 0, kills: 0
       });
-      R.addAvatar(r.id, r.color);
+      R.addAvatar(r.id, r.color, r.hat);
     }
     const mine = m.roster.find((r) => r.id === myId);
     me.playing = !!mine;
@@ -266,6 +277,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     if (!e) return;
     e.alive = false;
     const by = m.by && ents.get(m.by);
+    if (by) by.kills++;
     if (m.left) feed(e.name + ' left the match');
     else if (by) feed(by.name + ' 💦 ' + e.name, m.by === myId || m.v === myId);
     else feed(e.name + ' got soaked by the storm ⛈️', m.v === myId);
@@ -290,6 +302,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
 
   function onPickup(m) {
     R.setPickupTaken(m.i, true);
+    taken.add(m.i);
     if (m.by !== myId || !world) return;
     const p = world.pickups[m.i];
     sfx.pickup();
@@ -511,8 +524,6 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
 
   function frame(dt, time) {
     if (destroyed) return;
-    pingT += dt;
-    if (pingT > 2) { pingT = 0; send({ t: 'ping', c: Date.now() }); }
     if (phase !== 'match' && phase !== 'over') { R.render(dt, time, false); return; }
 
     const t = matchTime();
@@ -742,6 +753,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     }
   }
 
+  // "Still here" for the host. A timer rather than the animation loop, which
+  // browsers pause in background tabs (so switching apps doesn't get you kicked).
+  const pinger = setInterval(() => { if (!destroyed) send({ t: 'ping', c: Date.now() }); }, 2000);
+
   /* ---------- Buttons ---------- */
   const handlers = [];
   const on = (el, ev, fn) => { el.addEventListener(ev, fn); handlers.push([el, ev, fn]); };
@@ -766,6 +781,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
 
   function destroy() {
     destroyed = true;
+    clearInterval(pinger);
     clearMatch();
     input.setEnabled(false);
     setRain(0);
@@ -776,7 +792,31 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     R.setOrbit();
   }
 
-  return { onMessage, frame, destroy };
+  // Everything a new host needs to carry on the match if the old one leaves.
+  function exportState() {
+    const list = [...ents.values()].map((e) => {
+      const last = e.buf[e.buf.length - 1] || e;
+      const s = e.id === myId && me.playing ? me : last;
+      return { id: e.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw || 0, hp: e.id === myId ? me.hp : e.hp, alive: e.id === myId ? me.alive : e.alive, kills: e.kills || 0 };
+    });
+    return {
+      phase: phase === 'none' ? 'lobby' : phase, seed: worldSeed, tm: matchTime(), roster, ents: list,
+      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId
+    };
+  }
+
+  return {
+    onMessage, frame, destroy, exportState,
+    heirs: () => heirs.slice(),
+    hostId: () => hostId,
+    myId: () => myId,
+    rejoinInfo: () => ({ rejoin: myId, ammo: [me.ammo[1], me.ammo[2]] }),
+    // Point messages at a new host (or at our own host after taking over).
+    relink(sendFn, nowHost) { send = sendFn; if (nowHost) { isHost = true; hostId = myId; } },
+    // The new host didn't know us: start over as a newcomer with a new id.
+    reset(newId) { myId = newId; phase = 'none'; clearMatch(); },
+    notice(text) { centerMsg(text, 3); }
+  };
 }
 
 // Your own record, kept on this device.

@@ -130,6 +130,20 @@ input:focus { border-color: var(--accent); }
   transition: transform 0.12s;
 }
 
+.hats { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
+.hat-btn {
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 40px;
+  border-radius: 12px;
+  border: 0;
+  background: #f5f2fb;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s;
+}
+.hat-btn.on { background: #fff; box-shadow: 0 0 0 3px var(--ink); transform: scale(1.1); }
 .swatch.on { box-shadow: 0 0 0 3px var(--ink); transform: scale(1.12); }
 
 .btn {
@@ -158,6 +172,7 @@ input:focus { border-color: var(--accent); }
 .btn.primary:active { box-shadow: 0 2px 0 var(--primary-dark); }
 
 .btn.big { font-size: 1.3rem; padding: 16px 18px; margin: 4px 0 12px; }
+.practice-btn { margin: 0 0 10px; font-size: 0.95rem; padding: 8px; }
 .btn.ghost { background: transparent; box-shadow: none; color: var(--muted); margin-top: 6px; }
 
 .row { display: flex; gap: 10px; margin-bottom: 10px; }

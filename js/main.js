@@ -4,7 +4,7 @@ import * as S from './shared.js';
 import { createRenderer } from './render.js';
 import { createInput } from './input.js';
 import { createGame, loadStats } from './game.js';
-import { Host, cleanName, cleanColor } from './host.js';
+import { Host, cleanName, cleanColor, cleanHat } from './host.js';
 import * as net from './net.js';
 import { unlock, sfx, isMuted, setMuted } from './audio.js';
 
@@ -51,7 +51,8 @@ requestAnimationFrame(loop);
 /* ---------- Profile ---------- */
 let profile = {
   name: cleanName(store.get('name', '')),
-  color: cleanColor(store.get('color', S.COLORS[Math.floor(Math.random() * S.COLORS.length)]))
+  color: cleanColor(store.get('color', S.COLORS[Math.floor(Math.random() * S.COLORS.length)])),
+  hat: cleanHat(store.get('hat', 1 + Math.floor(Math.random() * (S.HATS.length - 1))))
 };
 if (profile.name === 'Player') profile.name = '';
 $('name').value = profile.name;
@@ -70,6 +71,23 @@ S.COLORS.forEach((c) => {
     colorsBox.querySelectorAll('.swatch').forEach((s) => s.classList.toggle('on', s === b));
   });
   colorsBox.append(b);
+});
+
+const hatsBox = $('hats');
+S.HATS.forEach((h, i) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'hat-btn';
+  b.textContent = h.icon;
+  b.title = h.label;
+  b.setAttribute('aria-label', h.label);
+  if (i === profile.hat) b.classList.add('on');
+  b.addEventListener('click', () => {
+    profile.hat = i;
+    store.set('hat', i);
+    hatsBox.querySelectorAll('.hat-btn').forEach((x) => x.classList.toggle('on', x === b));
+  });
+  hatsBox.append(b);
 });
 
 function saveProfile() {
@@ -136,45 +154,113 @@ async function go(kind, code) {
   }
 }
 
-function startHost(res) {
-  let game = null;
+function startHost(res, takeover, game) {
+  const localId = game ? game.myId() : 'h';
   const host = new Host({
-    peer: res.peer, quick: res.quick, code: res.code, profile,
-    deliverLocal: (m) => { Promise.resolve().then(() => { if (game) game.onMessage(m); }); }
+    peer: res.peer, quick: res.quick, code: res.code, practice: res.practice, profile, localId, takeover,
+    deliverLocal: (m) => { Promise.resolve().then(() => { if (session && session.host === host) session.game.onMessage(m); }); }
   });
-  game = createGame({ render: R, input, send: (m) => host.receive('h', m), myId: 'h', isHost: true, mobile, onLeave: leave });
-  session = { game, host, peer: res.peer, quick: res.quick };
-  res.peer.on('error', (e) => console.warn('peer error', e && e.type, e));
-  if (!res.quick) history.replaceState(null, '', '?room=' + res.code);
+  if (game) game.relink((m) => host.receive(localId, m), true);
+  else game = createGame({ render: R, input, send: (m) => host.receive(localId, m), myId: localId, isHost: true, mobile, onLeave: leave });
+  session = { game, host, peer: res.peer, quick: res.quick, code: res.code };
+  res.peer.on('error', (e) => { if (e.type !== 'peer-unavailable') console.warn('peer error', e && e.type, e); });
+  if (!res.quick && !res.practice) history.replaceState(null, '', '?room=' + res.code);
+  if (res.practice) setTimeout(() => host.receive(localId, { t: 'start' }), 50);
+  if (takeover) {
+    host.broadcast({ t: 'feed', text: profile.name + ' is hosting now' });
+    game.notice('The host left — you\'re hosting now! 👑');
+  }
 }
 
-function startGuest(res) {
-  const { peer, conn, welcome } = res;
-  let lastHeard = performance.now();
-  const game = createGame({
-    render: R, input, myId: welcome.id, isHost: false, mobile, onLeave: leave,
-    send: (m) => { if (conn.open) { try { conn.send(m); } catch (e) { /* ignore */ } } }
-  });
-  const s = { game, peer, conn, quick: welcome.quick, code: welcome.code };
+// Practice: we host a match for ourselves and bots, no internet needed.
+function startPractice() {
+  unlock();
+  sfx.click();
+  saveProfile();
+  screen('none');
+  const fakePeer = { on() {}, destroy() {} };
+  startHost({ role: 'host', peer: fakePeer, quick: false, practice: true, code: 'practice' });
+}
+
+function startGuest(res, game) {
+  const { peer, welcome } = res;
+  if (game) {
+    if (welcome.resume) game.relink(sendVia(res.conn), false);
+    else { game.relink(sendVia(res.conn), false); game.reset(welcome.id); }
+  } else {
+    game = createGame({ render: R, input, myId: welcome.id, isHost: false, mobile, onLeave: leave, send: sendVia(res.conn) });
+  }
+  const s = { game, peer, conn: res.conn, quick: welcome.quick, code: welcome.code, lastHeard: performance.now() };
   session = s;
-  conn.on('data', (m) => {
-    lastHeard = performance.now();
-    if (m && m.t === 'bye') { lost('The host closed the room.'); return; }
-    game.onMessage(m);
-  });
-  conn.on('close', () => lost('The host left, so the match ended.'));
-  peer.on('error', (e) => console.warn('peer error', e && e.type, e));
+  wireConn(s, res.conn);
+  peer.on('error', (e) => { if (e.type !== 'peer-unavailable') console.warn('peer error', e && e.type, e); });
   s.watch = setInterval(() => {
-    if (performance.now() - lastHeard > 12000) lost('Lost the connection to the host.');
+    if (performance.now() - s.lastHeard > 12000) hostGone(s);
   }, 1000);
   if (!welcome.quick) history.replaceState(null, '', '?room=' + welcome.code);
+}
 
-  function lost(text) {
-    if (session !== s) return;
-    const quick = s.quick;
-    endSession();
-    showError('Match ended', text + (quick ? ' Find another match?' : ''), quick);
+function sendVia(conn) {
+  return (m) => { if (conn.open) { try { conn.send(m); } catch (e) { /* ignore */ } } };
+}
+
+function wireConn(s, conn) {
+  conn.on('data', (m) => {
+    if (s.conn !== conn) return;
+    s.lastHeard = performance.now();
+    if (m && m.t === 'bye') { hostGone(s); return; }
+    s.game.onMessage(m);
+  });
+  conn.on('close', () => { if (s.conn === conn) hostGone(s); });
+}
+
+// The host left. The next player in line takes over the room and everyone
+// else reconnects to them, so the match carries on.
+async function hostGone(s) {
+  if (session !== s || s.migrating) return;
+  s.migrating = true;
+  clearInterval(s.watch);
+  const oldConn = s.conn;
+  s.conn = null;
+  try { oldConn.close(); } catch (e) { /* ignore */ }
+  const game = s.game;
+  const myId = game.myId();
+  const heirs = game.heirs().filter((id) => id !== game.hostId());
+  const rank = Math.max(0, heirs.indexOf(myId));
+  const roomPeer = net.peerIdFor(s.code);
+  game.notice('The host left — reconnecting…');
+  const started = performance.now();
+  while (session === s && performance.now() - started < 25000) {
+    const waited = performance.now() - started;
+    // The first heir tries right away; the next ones give them a few seconds' head start.
+    if (heirs.indexOf(myId) !== -1 && waited >= rank * 4000) {
+      try {
+        const peer = await net.openPeer(roomPeer);
+        if (session !== s) { peer.destroy(); return; }
+        const state = game.exportState();
+        try { s.peer.destroy(); } catch (e) { /* ignore */ }
+        startHost({ role: 'host', peer, quick: s.quick, code: s.code }, state, game);
+        return;
+      } catch (e) {
+        if (e.type !== 'unavailable-id') console.warn('take over failed', e);
+      }
+    }
+    try {
+      if (s.peer.destroyed) s.peer = await net.openPeer();
+      const { conn, welcome } = await net.joinId(s.peer, roomPeer, profile, game.rejoinInfo());
+      if (session !== s) { try { conn.close(); } catch (e) { /* ignore */ } return; }
+      startGuest({ peer: s.peer, conn, welcome }, game);
+      game.notice('Back in! 🎈');
+      return;
+    } catch (e) {
+      if (e.type !== 'missing' && e.type !== 'timeout') console.warn('rejoin failed', e);
+    }
+    await new Promise((r) => setTimeout(r, 1200));
   }
+  if (session !== s) return;
+  const quick = s.quick;
+  endSession();
+  showError('Match ended', 'The host left and nobody could take over.' + (quick ? ' Find another match?' : ''), quick);
 }
 
 function endSession() {
@@ -185,7 +271,7 @@ function endSession() {
   s.game.destroy();
   if (s.host) s.host.destroy();
   else {
-    try { s.conn.close(); } catch (e) { /* ignore */ }
+    try { if (s.conn) s.conn.close(); } catch (e) { /* ignore */ }
     setTimeout(() => { try { s.peer.destroy(); } catch (e) { /* ignore */ } }, 200);
   }
 }
@@ -199,6 +285,7 @@ function leave() {
 /* ---------- Buttons ---------- */
 $('quick').addEventListener('click', () => go('quick'));
 $('create').addEventListener('click', () => go('create'));
+$('practice').addEventListener('click', startPractice);
 $('join-open').addEventListener('click', () => {
   $('join-form').hidden = !$('join-form').hidden;
   if (!$('join-form').hidden) $('join-code').focus();
@@ -233,7 +320,7 @@ document.addEventListener('pointerdown', unlock, { once: true });
 window.addEventListener('pagehide', () => {
   if (!session) return;
   if (session.host) session.host.destroy();
-  else { try { session.conn.close(); } catch (e) { /* ignore */ } }
+  else { try { if (session.conn) session.conn.close(); } catch (e) { /* ignore */ } }
 });
 
 // Opened from an invite link: get the join box ready.

@@ -35,11 +35,16 @@
         <span>Your colour</span>
         <div id="colors" class="colors"></div>
       </div>
+      <div class="field">
+        <span>Your hat</span>
+        <div id="hats" class="hats"></div>
+      </div>
       <button id="quick" class="btn big primary">Quick Play</button>
       <div class="row">
         <button id="create" class="btn">Create room</button>
         <button id="join-open" class="btn">Join room</button>
       </div>
+      <button id="practice" class="btn ghost practice-btn">🎯 Practice with bots (works offline)</button>
       <form id="join-form" class="row" hidden>
         <input id="join-code" maxlength="5" placeholder="Room code" autocomplete="off" autocapitalize="characters" spellcheck="false">
         <button class="btn primary" type="submit">Join</button>
@@ -89,7 +94,7 @@
       <p id="lobby-status" class="status"></p>
       <ul id="lobby-players"></ul>
       <div id="host-controls" hidden>
-        <label class="toggle"><input type="checkbox" id="bots-toggle" checked> Fill empty spots with bots</label>
+        <label class="toggle" id="bots-row"><input type="checkbox" id="bots-toggle" checked> Fill empty spots with bots</label>
         <button id="start" class="btn big primary">Start match</button>
       </div>
       <button id="leave-lobby" class="btn ghost">Leave</button>
