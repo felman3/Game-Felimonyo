@@ -1,0 +1,631 @@
+// The host runs the match: it decides who got splashed, owns the storm,
+// the pickups and the bots, and sends everyone a snapshot 15 times a second.
+// Each player moves their own character (so it feels instant) and tells the
+// host where they are.
+
+import * as S from './shared.js';
+
+const TICK = 1 / 30;
+const SNAP_EVERY = 1 / 15;
+const QUICK_WAIT = 20;      // seconds a public island waits for players
+const QUICK_MIN_WAIT = 8;
+const OVER_WAIT = 9;
+const TIMEOUT_MS = 10000;   // a player we haven't heard from for this long has left
+
+// Timers in hidden tabs get slowed to once a second; a worker's don't, so the
+// match keeps running if the host switches tabs.
+function makeTicker(fn) {
+  try {
+    const src = 'setInterval(function(){postMessage(0)},' + Math.round(TICK * 1000) + ')';
+    const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    worker.onmessage = fn;
+    return () => worker.terminate();
+  } catch (e) {
+    const id = setInterval(fn, TICK * 1000);
+    return () => clearInterval(id);
+  }
+}
+
+export class Host {
+  constructor({ peer, quick, code, profile, deliverLocal, onEnd }) {
+    this.peer = peer;
+    this.quick = quick;
+    this.code = code;
+    this.deliverLocal = deliverLocal;
+    this.onEnd = onEnd;
+    this.localId = 'h';
+    this.members = new Map();   // everyone in the room: id -> { id, name, color, conn, lastHeard, spectator }
+    this.ents = new Map();      // everyone in the current match, bots included
+    this.phase = 'lobby';
+    this.bots = true;
+    this.nextId = 1;
+    this.projId = 0;
+    this.tm = 0;
+    this.last = performance.now();
+    this.snapT = 0;
+    this.lobbyT = 0;
+    this.countdownEnd = 0;
+    this.nextSeed = this.newSeed();
+    this.members.set('h', { id: 'h', name: profile.name, color: profile.color, conn: null, lastHeard: Infinity });
+    peer.on('connection', (c) => this.onConnection(c));
+    this.stopTicker = makeTicker(() => this.tick());
+    this.enterLobby();
+  }
+
+  newSeed() { return (Math.random() * 2147483647) | 0; }
+
+  destroy() {
+    this.stopTicker();
+    for (const m of this.members.values()) {
+      if (m.conn) { try { m.conn.send({ t: 'bye' }); } catch (e) { /* ignore */ } }
+    }
+    setTimeout(() => { try { this.peer.destroy(); } catch (e) { /* ignore */ } }, 300);
+  }
+
+  /* ---------- Talking to players ---------- */
+
+  sendTo(m, msg) {
+    if (!m) return;
+    if (m.id === this.localId) { this.deliverLocal(msg); return; }
+    if (m.conn && m.conn.open) { try { m.conn.send(msg); } catch (e) { /* ignore */ } }
+  }
+
+  broadcast(msg) {
+    for (const m of this.members.values()) this.sendTo(m, msg);
+  }
+
+  onConnection(c) {
+    let id = null;
+    c.on('data', (msg) => {
+      if (!msg || typeof msg !== 'object') return;
+      if (!id) {
+        if (msg.t !== 'hi') return;
+        const humans = this.members.size;
+        if (humans >= S.MAX_HUMANS) {
+          try { c.send({ t: 'full' }); } catch (e) { /* ignore */ }
+          setTimeout(() => { try { c.close(); } catch (e) { /* ignore */ } }, 500);
+          return;
+        }
+        id = 'p' + this.nextId++;
+        const m = {
+          id, conn: c, lastHeard: performance.now(),
+          name: cleanName(msg.name), color: cleanColor(msg.color),
+          spectator: this.phase !== 'lobby'
+        };
+        this.members.set(id, m);
+        c.send({ t: 'welcome', id, quick: this.quick, code: this.code });
+        this.joined(m);
+        return;
+      }
+      this.receive(id, msg);
+    });
+    c.on('close', () => { if (id) this.leave(id); });
+    c.on('error', () => { if (id) this.leave(id); });
+  }
+
+  joined(m) {
+    if (this.phase === 'lobby') {
+      if (this.quick && this.countdownEnd) {
+        this.countdownEnd = Math.max(this.countdownEnd, performance.now() + QUICK_MIN_WAIT * 1000);
+      }
+      this.sendLobby();
+    } else {
+      // Arrived mid-match: watch until the next round.
+      this.sendTo(m, this.startMsg());
+      this.sendTo(m, { t: 'note', text: 'A match is on. You\'ll join the next round.' });
+      for (const i of this.taken) this.sendTo(m, { t: 'pk', i, by: null });
+    }
+    this.broadcast({ t: 'feed', text: m.name + ' joined' });
+  }
+
+  leave(id) {
+    const m = this.members.get(id);
+    if (!m) return;
+    this.members.delete(id);
+    const e = this.ents.get(id);
+    if (e && e.alive && this.phase === 'match') {
+      e.left = true;
+      this.knockOut(e, null, true);
+    } else if (e) {
+      e.left = true;
+    }
+    this.broadcast({ t: 'feed', text: m.name + ' left' });
+    if (this.phase === 'lobby') this.sendLobby();
+  }
+
+  // Messages from a player (the host's own player arrives here too).
+  receive(id, msg) {
+    const m = this.members.get(id);
+    if (!m) return;
+    m.lastHeard = performance.now();
+    const e = this.ents.get(id);
+    switch (msg.t) {
+      case 'st':
+        if (e && e.alive && this.phase === 'match') this.playerMoved(e, msg);
+        break;
+      case 'fire':
+        if (e && this.phase === 'match') this.fire(e, msg);
+        break;
+      case 'ping':
+        this.sendTo(m, { t: 'pong', c: msg.c });
+        break;
+      case 'chat': {
+        const text = String(msg.text || '').slice(0, 60);
+        if (text) this.broadcast({ t: 'emote', id, e: text });
+        break;
+      }
+      case 'start':
+        if (id === this.localId && this.phase === 'lobby') this.startMatch();
+        break;
+      case 'bots':
+        if (id === this.localId) { this.bots = !!msg.on; this.sendLobby(); }
+        break;
+      default:
+    }
+  }
+
+  /* ---------- Lobby ---------- */
+
+  enterLobby() {
+    this.phase = 'lobby';
+    this.ents.clear();
+    for (const m of this.members.values()) m.spectator = false;
+    this.nextSeed = this.newSeed();
+    this.countdownEnd = this.quick ? performance.now() + QUICK_WAIT * 1000 : 0;
+    this.sendLobby();
+  }
+
+  sendLobby() {
+    const players = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color }));
+    const cd = this.countdownEnd ? Math.max(0, Math.ceil((this.countdownEnd - performance.now()) / 1000)) : null;
+    this.broadcast({ t: 'lobby', players, quick: this.quick, code: this.code, cd, bots: this.bots, seed: this.nextSeed, fill: S.FILL_TO });
+  }
+
+  /* ---------- Match ---------- */
+
+  startMatch() {
+    const seed = this.nextSeed;
+    this.seed = seed;
+    this.world = S.buildWorld(seed);
+    this.storm = S.buildStorm(seed);
+    this.ents.clear();
+    this.projs = [];
+    this.taken = new Set();
+    this.tm = 0;
+    this.snapT = 0;
+    this.humanlessT = 0;
+
+    const roster = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color, bot: false }));
+    if (this.bots || roster.length < 2) {
+      const names = shuffle(S.BOT_NAMES.slice());
+      let n = 1;
+      while (roster.length < Math.max(this.bots ? S.FILL_TO : 2, 2) && roster.length < S.MAX_HUMANS + 4) {
+        roster.push({ id: 'b' + n, name: names[(n - 1) % names.length], color: S.COLORS[Math.floor(Math.random() * S.COLORS.length)], bot: true });
+        n++;
+      }
+    }
+
+    // Spread everyone around the island.
+    const R = S.rng(seed + 99);
+    const a0 = R() * Math.PI * 2;
+    roster.forEach((p, i) => {
+      let x = 0, z = 0;
+      for (let k = 0; k < 30; k++) {
+        const a = a0 + (i / roster.length) * Math.PI * 2 + (R() - 0.5) * 0.3 + k * 0.05;
+        const r = S.ISLAND_R * (0.35 + R() * 0.35);
+        x = Math.cos(a) * r; z = Math.sin(a) * r;
+        if (S.onLand(this.world, x, z) && !S.hitsObstacle(this.world, x, z, 1, 1)) break;
+      }
+      p.x = S.r2(x); p.z = S.r2(z);
+      this.ents.set(p.id, {
+        id: p.id, name: p.name, color: p.color, bot: p.bot,
+        x, z, y: S.DROP_Y, vy: 0, yaw: Math.atan2(-x, -z), ground: false, umbrella: true,
+        dashT: 0, dashCd: 0, ddx: 0, ddz: 0,
+        hp: S.MAX_HP, alive: true, ammo: [0, 0, 0], lastFire: -9, kills: 0, place: 0, f: 0,
+        px: x, pz: z, vx: 0, vz: 0,
+        ai: p.bot ? newBrain() : null
+      });
+    });
+    this.roster = roster;
+    this.phase = 'match';
+    this.broadcast(this.startMsg());
+  }
+
+  startMsg() {
+    return { t: 'start', seed: this.seed, roster: this.roster, tm: S.r2(this.tm) };
+  }
+
+  playerMoved(e, msg) {
+    let x = +msg.x, z = +msg.z, y = +msg.y;
+    if (!isFinite(x) || !isFinite(z) || !isFinite(y)) return;
+    if (!S.onLand(this.world, x, z)) return;
+    e.x = x; e.z = z; e.y = y;
+    e.yaw = +msg.yaw || 0;
+    e.f = msg.f | 0;
+    e.umbrella = !!(e.f & 8);
+  }
+
+  fire(e, msg) {
+    if (!e.alive) return;
+    const wp = S.WEAPONS[msg.w | 0];
+    if (!wp) return;
+    if (e.y - S.groundHeight(this.world, e.x, e.z) > 2.5 && this.tm < S.DROP_TIME + 6) return; // still floating down
+    if (this.tm - e.lastFire < wp.cd * 0.75) return;
+    if (wp.id !== S.W_BALLOON) {
+      if (e.ammo[wp.id] <= 0) return;
+      e.ammo[wp.id]--;
+    }
+    e.lastFire = this.tm;
+    let sx = +msg.x, sz = +msg.z;
+    if (!isFinite(sx) || !isFinite(sz) || Math.hypot(sx - e.x, sz - e.z) > 3) { sx = e.x; sz = e.z; }
+    const p = { id: ++this.projId, o: e.id, w: wp.id, sx, sy: e.y + S.HAND_Y, sz, t0: this.tm, age: 0 };
+    if (wp.arc) {
+      let tx = +msg.tx, tz = +msg.tz;
+      if (!isFinite(tx) || !isFinite(tz)) return;
+      const d = Math.hypot(tx - sx, tz - sz);
+      if (d > wp.range) { tx = sx + (tx - sx) * wp.range / d; tz = sz + (tz - sz) * wp.range / d; }
+      p.tx = tx; p.tz = tz;
+    } else {
+      let dx = +msg.dx, dz = +msg.dz;
+      const d = Math.hypot(dx, dz);
+      if (!(d > 0)) return;
+      p.dx = dx / d; p.dz = dz / d;
+    }
+    S.shotPath(this.world, p);
+    this.projs.push(p);
+    const out = { t: 'pj', id: p.id, o: p.o, w: p.w, sx: S.r2(p.sx), sy: S.r2(p.sy), sz: S.r2(p.sz), t0: S.r2(p.t0) };
+    if (p.arc) { out.tx = S.r2(p.tx); out.tz = S.r2(p.tz); } else { out.dx = Math.round(p.dx * 1000) / 1000; out.dz = Math.round(p.dz * 1000) / 1000; }
+    if (msg.lid) out.lid = msg.lid;
+    // Use the rounded numbers ourselves too, so every browser draws the same path.
+    Object.assign(p, { sx: out.sx, sy: out.sy, sz: out.sz });
+    if (p.arc) { p.tx = out.tx; p.tz = out.tz; } else { p.dx = out.dx; p.dz = out.dz; }
+    S.shotPath(this.world, p);
+    this.broadcast(out);
+  }
+
+  stepShots() {
+    const pos = { x: 0, y: 0, z: 0 };
+    const keep = [];
+    for (const p of this.projs) {
+      const wp = S.WEAPONS[p.w];
+      const a0 = p.age, a1 = this.tm - p.t0;
+      p.age = a1;
+      let done = false;
+      for (let a = a0; a < a1 && !done;) {
+        a = Math.min(a + 0.02, a1);
+        S.shotPos(p, a, pos);
+        // Hit a player?
+        for (const e of this.ents.values()) {
+          if (!e.alive || e.id === p.o) continue;
+          if (Math.hypot(e.x - pos.x, e.z - pos.z) < S.PLAYER_R + wp.size && pos.y > e.y - 0.2 && pos.y < e.y + S.PLAYER_H) {
+            this.splash(p, pos, e);
+            done = true;
+            break;
+          }
+        }
+        if (done) break;
+        if (pos.y <= S.groundHeight(this.world, pos.x, pos.z) + 0.05 || S.hitsObstacle(this.world, pos.x, pos.z, pos.y, wp.size * 0.5)) {
+          if (p.arc) this.splash(p, pos, null);
+          done = true;
+        } else if (!p.arc && a >= p.life) {
+          done = true;
+        }
+      }
+      if (!done) keep.push(p);
+    }
+    this.projs = keep;
+  }
+
+  splash(p, pos, direct) {
+    const wp = S.WEAPONS[p.w];
+    const owner = this.ents.get(p.o);
+    const hits = [];
+    const hurt = (e, dmg) => {
+      dmg = Math.round(dmg);
+      if (dmg <= 0) return;
+      e.hp -= dmg;
+      hits.push([e.id, dmg]);
+      if (e.hp <= 0) this.knockOut(e, owner, false);
+    };
+    if (wp.arc) {
+      for (const e of this.ents.values()) {
+        if (!e.alive || e.id === p.o) continue;
+        const d = Math.hypot(e.x - pos.x, e.z - pos.z);
+        if (d > wp.splash || Math.abs(e.y + 1 - pos.y) > 3.5) continue;
+        hurt(e, e === direct ? wp.dmg : S.lerp(wp.dmg, wp.minDmg, d / wp.splash));
+      }
+    } else if (direct) {
+      hurt(direct, wp.dmg);
+    }
+    this.broadcast({ t: 'sp', id: p.id, w: p.w, o: p.o, x: S.r2(pos.x), y: S.r2(pos.y), z: S.r2(pos.z), h: hits });
+  }
+
+  knockOut(e, by, quiet) {
+    if (!e.alive) return;
+    e.alive = false;
+    e.hp = 0;
+    let alive = 0;
+    for (const o of this.ents.values()) if (o.alive) alive++;
+    e.place = alive + 1;
+    if (by && by !== e) by.kills++;
+    this.broadcast({ t: 'ko', v: e.id, by: by && by !== e ? by.id : null, place: e.place, left: !!quiet });
+  }
+
+  stepPickups() {
+    const pk = this.world.pickups;
+    for (const e of this.ents.values()) {
+      if (!e.alive) continue;
+      for (const p of pk) {
+        if (this.taken.has(p.i)) continue;
+        if (Math.abs(p.x - e.x) > S.PICKUP_R || Math.abs(p.z - e.z) > S.PICKUP_R) continue;
+        if (Math.hypot(p.x - e.x, p.z - e.z) > S.PICKUP_R || Math.abs(e.y - p.y) > 2.5) continue;
+        if (p.type === S.PICK_TOWEL) {
+          if (e.hp >= S.MAX_HP) continue;
+          e.hp = Math.min(S.MAX_HP, e.hp + S.TOWEL_HEAL);
+        } else {
+          const w = p.type === S.PICK_SOAKER ? S.W_SOAKER : S.W_MEGA;
+          const wp = S.WEAPONS[w];
+          if (e.ammo[w] >= wp.max) continue;
+          e.ammo[w] = Math.min(wp.max, e.ammo[w] + wp.pick);
+        }
+        this.taken.add(p.i);
+        this.broadcast({ t: 'pk', i: p.i, by: e.id });
+      }
+    }
+  }
+
+  stepStorm(dt) {
+    const st = S.stormAt(this.storm, this.tm);
+    for (const e of this.ents.values()) {
+      if (!e.alive) continue;
+      if (Math.hypot(e.x - st.x, e.z - st.z) > st.r) {
+        e.hp -= st.dmg * dt;
+        if (e.hp <= 0) this.knockOut(e, null, false);
+      }
+    }
+  }
+
+  checkEnd(dt) {
+    let alive = 0, humans = 0, last = null;
+    for (const e of this.ents.values()) {
+      if (!e.alive) continue;
+      alive++;
+      last = e;
+      if (!e.bot) humans++;
+    }
+    let winner = null, over = false;
+    if (alive <= 1) { over = true; winner = last; }
+    // Everyone real is out: wrap up after a few seconds instead of watching bots for minutes.
+    this.humanlessT = humans === 0 ? this.humanlessT + dt : 0;
+    if (!over && this.humanlessT > 6) {
+      over = true;
+      for (const e of this.ents.values()) if (e.alive && (!winner || e.hp > winner.hp)) winner = e;
+    }
+    if (!over) return;
+    if (winner) winner.place = 1;
+    this.phase = 'over';
+    this.overEnd = performance.now() + OVER_WAIT * 1000;
+    const stats = [...this.ents.values()].map((e) => [e.id, e.kills, e.place]);
+    this.broadcast({ t: 'over', winner: winner ? winner.id : null, stats });
+  }
+
+  sendSnap() {
+    const p = [];
+    let alive = 0;
+    for (const e of this.ents.values()) {
+      if (e.alive) alive++;
+      // f: 1 alive, 2 dashing, 4 moving, 8 umbrella, 16-48 weapon in hand
+      const f = (e.alive ? 1 : 0) | (e.f & 62);
+      p.push([e.id, S.r2(e.x), S.r2(e.y), S.r2(e.z), S.r2(e.yaw), Math.max(0, Math.ceil(e.hp)), f]);
+    }
+    const base = { t: 'snap', tm: Math.round(this.tm * 1000) / 1000, p, n: alive };
+    for (const m of this.members.values()) {
+      const e = this.ents.get(m.id);
+      this.sendTo(m, e ? Object.assign({ me: { a: [e.ammo[1], e.ammo[2]], k: e.kills } }, base) : base);
+    }
+  }
+
+  tick() {
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - this.last) / 1000);
+    this.last = now;
+
+    for (const m of this.members.values()) {
+      if (m.id !== this.localId && now - m.lastHeard > TIMEOUT_MS) {
+        try { m.conn.close(); } catch (e) { /* ignore */ }
+        this.leave(m.id);
+      }
+    }
+
+    if (this.phase === 'lobby') {
+      this.lobbyT += dt;
+      if (this.countdownEnd && now >= this.countdownEnd) { this.startMatch(); return; }
+      if (this.lobbyT >= 1) { this.lobbyT = 0; this.sendLobby(); }
+      return;
+    }
+
+    if (this.phase === 'over') {
+      if (now >= this.overEnd) { this.enterLobby(); return; }
+      this.lobbyT += dt;
+      if (this.lobbyT >= 1) { this.lobbyT = 0; this.broadcast({ t: 'hb' }); }
+      return;
+    }
+
+    this.tm += dt;
+    for (const e of this.ents.values()) if (e.ai && e.alive) this.stepBot(e, dt);
+    for (const e of this.ents.values()) {
+      e.vx = S.lerp(e.vx, (e.x - e.px) / dt, 0.3);
+      e.vz = S.lerp(e.vz, (e.z - e.pz) / dt, 0.3);
+      e.px = e.x; e.pz = e.z;
+    }
+    this.stepShots();
+    this.stepPickups();
+    this.stepStorm(dt);
+    this.checkEnd(dt);
+    this.snapT += dt;
+    if (this.snapT >= SNAP_EVERY || this.phase === 'over') {
+      this.snapT = 0;
+      this.sendSnap();
+    }
+  }
+
+  /* ---------- Bots ---------- */
+
+  stepBot(e, dt) {
+    const ai = e.ai;
+    const w = this.world;
+    ai.think -= dt;
+    ai.fireWait -= dt;
+    ai.strafeT -= dt;
+    if (ai.strafeT <= 0) { ai.strafe = Math.random() < 0.5 ? -1 : 1; ai.strafeT = 1 + Math.random() * 1.5; }
+
+    if (ai.think <= 0) {
+      ai.think = 0.25 + Math.random() * 0.1;
+      const st = S.stormAt(this.storm, this.tm);
+      const useNext = st.shrinking || st.until < 15;
+      const cx = useNext ? st.nx : st.x, cz = useNext ? st.nz : st.z, cr = Math.max(4, useNext ? st.nr : st.r);
+      const toSafe = Math.hypot(e.x - cx, e.z - cz);
+      ai.target = null;
+      if (e.y - S.groundHeight(w, e.x, e.z) < 2) {
+        let best = 26;
+        for (const o of this.ents.values()) {
+          if (!o.alive || o === e) continue;
+          const d = Math.hypot(o.x - e.x, o.z - e.z);
+          if (d < best && !S.lineBlocked(w, e.x, e.z, o.x, o.z, e.y + 2.6)) { best = d; ai.target = o; }
+        }
+      }
+      if (ai.target && toSafe < cr) {
+        ai.mode = 'fight';
+        if (ai.react <= 0) ai.react = 0.35 + Math.random() * 0.5;
+      } else if (toSafe > cr * 0.8) {
+        ai.mode = 'storm';
+        if (!ai.goal || Math.hypot(ai.goal[0] - cx, ai.goal[1] - cz) > cr * 0.6) ai.goal = pointNear(w, cx, cz, cr * 0.5);
+      } else {
+        let best = 35, goal = null;
+        for (const p of w.pickups) {
+          if (this.taken.has(p.i)) continue;
+          if (p.type === S.PICK_TOWEL && e.hp > 80) continue;
+          if (Math.hypot(p.x - cx, p.z - cz) > cr) continue;
+          const d = Math.hypot(p.x - e.x, p.z - e.z);
+          if (d < best) { best = d; goal = [p.x, p.z]; }
+        }
+        // Nothing to grab: go looking for someone to splash.
+        if (!goal && e.hp > 45) {
+          let bestE = 60;
+          for (const o of this.ents.values()) {
+            if (!o.alive || o === e) continue;
+            const d = Math.hypot(o.x - e.x, o.z - e.z);
+            if (d < bestE && Math.hypot(o.x - cx, o.z - cz) < cr) { bestE = d; goal = [o.x, o.z]; }
+          }
+        }
+        if (goal) { ai.mode = 'loot'; ai.goal = goal; } else {
+          ai.mode = 'wander';
+          if (!ai.goal || Math.hypot(ai.goal[0] - e.x, ai.goal[1] - e.z) < 2) ai.goal = pointNear(w, cx, cz, cr * 0.7);
+        }
+        if (ai.target) ai.mode = 'fight';
+      }
+    }
+
+    let mx = 0, mz = 0;
+    if (ai.mode === 'fight' && ai.target && ai.target.alive) {
+      const t = ai.target;
+      const dx = t.x - e.x, dz = t.z - e.z, d = Math.hypot(dx, dz) || 1;
+      const ux = dx / d, uz = dz / d;
+      const want = ai.range;
+      const fwd = d > want + 3 ? 1 : d < want - 4 ? -1 : 0;
+      mx = ux * fwd - uz * ai.strafe * 0.8;
+      mz = uz * fwd + ux * ai.strafe * 0.8;
+      e.yaw = Math.atan2(ux, uz);
+      ai.react -= dt;
+      if (ai.react <= 0 && ai.fireWait <= 0) this.botShoot(e, t, d);
+    } else if (ai.goal) {
+      const dx = ai.goal[0] - e.x, dz = ai.goal[1] - e.z, d = Math.hypot(dx, dz);
+      if (d > 0.5) { mx = dx / d; mz = dz / d; }
+      if (mx || mz) e.yaw = Math.atan2(mx, mz);
+    }
+
+    // Step out of the way of balloons about to land nearby.
+    let dodge = false;
+    for (const p of this.projs) {
+      if (!p.arc || p.o === e.id || p.T - p.age > 0.8) continue;
+      const dx = e.x - p.tx, dz = e.z - p.tz, d = Math.hypot(dx, dz);
+      const r = S.WEAPONS[p.w].splash + 1;
+      if (d < r && Math.random() < ai.dodge) { mx = dx / (d || 1); mz = dz / (d || 1); dodge = true; break; }
+    }
+
+    if (ai.unstickT > 0) {
+      ai.unstickT -= dt;
+      mx = ai.ux; mz = ai.uz;
+    }
+    const len = Math.hypot(mx, mz);
+    if (len > 1) { mx /= len; mz /= len; }
+    const input = { mx, mz, jump: Math.random() < 0.004, dash: dodge && Math.random() < 0.1 };
+    S.movePlayer(w, e, input, dt);
+    e.f = (e.dashT > 0 ? 2 : 0) | (len > 0.1 ? 4 : 0) | (e.umbrella ? 8 : 0) | ((ai.w || 0) << 4);
+
+    // Stuck on a wall? Walk sideways for a moment.
+    ai.stuckT += dt;
+    if (ai.stuckT > 1) {
+      if (len > 0.1 && Math.hypot(e.x - ai.sx, e.z - ai.sz) < 1.5 && ai.unstickT <= 0) {
+        const a = Math.random() * Math.PI * 2;
+        ai.ux = Math.cos(a); ai.uz = Math.sin(a); ai.unstickT = 0.8;
+        ai.goal = null;
+      }
+      ai.stuckT = 0; ai.sx = e.x; ai.sz = e.z;
+    }
+  }
+
+  botShoot(e, t, d) {
+    const ai = e.ai;
+    let w = S.W_BALLOON;
+    if (e.ammo[S.W_SOAKER] > 0 && d < 14 && Math.random() < 0.7) w = S.W_SOAKER;
+    else if (e.ammo[S.W_MEGA] > 0 && d < 19 && Math.random() < 0.35) w = S.W_MEGA;
+    const wp = S.WEAPONS[w];
+    ai.w = w;
+    const flight = wp.arc ? Math.max(0.3, d / wp.speed) : d / wp.speed;
+    const err = ai.aim * (0.6 + d * 0.07);
+    const tx = t.x + t.vx * flight * ai.lead + gauss() * err;
+    const tz = t.z + t.vz * flight * ai.lead + gauss() * err;
+    this.fire(e, { w, x: e.x, z: e.z, tx, tz, dx: tx - e.x, dz: tz - e.z });
+    ai.fireWait = w === S.W_SOAKER ? wp.cd * (1.2 + Math.random()) : wp.cd * (1.4 + Math.random() * 1.2);
+    if (w === S.W_SOAKER && Math.random() < 0.08) ai.fireWait = 0.6;
+  }
+}
+
+function newBrain() {
+  return {
+    think: Math.random() * 0.3, mode: 'wander', goal: null, target: null,
+    react: 0, fireWait: 0, strafe: 1, strafeT: 0, stuckT: 0, unstickT: 0, sx: 0, sz: 0, ux: 0, uz: 0,
+    range: 10 + Math.random() * 6, aim: 0.7 + Math.random() * 0.8, lead: 0.4 + Math.random() * 0.6, dodge: 0.03 + Math.random() * 0.05
+  };
+}
+
+function pointNear(w, cx, cz, r) {
+  for (let k = 0; k < 20; k++) {
+    const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * r;
+    const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+    if (S.onLand(w, x, z) && !S.hitsObstacle(w, x, z, 1, 1)) return [x, z];
+  }
+  return [cx, cz];
+}
+
+function gauss() {
+  return (Math.random() + Math.random() + Math.random() - 1.5) * 1.15;
+}
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+export function cleanName(s) {
+  const n = String(s || '').replace(/[<>]/g, '').trim().slice(0, 16);
+  return n || 'Player';
+}
+
+export function cleanColor(c) {
+  return /^#[0-9a-f]{6}$/i.test(String(c)) ? c : S.COLORS[0];
+}

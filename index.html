@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Splash Royale</title>
+  <meta name="description" content="A free water-balloon battle royale you play in your browser. Last one dry wins!">
+  <meta name="theme-color" content="#40c4ff">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Splash Royale">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="labels"></div>
+  <div id="storm-vignette"></div>
+  <div id="hit-vignette"></div>
+
+  <!-- Menu -->
+  <section id="menu" class="screen">
+    <div class="card menu-card">
+      <h1 class="logo"><span class="l1">Splash</span><span class="l2">Royale</span></h1>
+      <p class="tag">A water-balloon battle royale. Last one dry wins!</p>
+      <p id="stats" class="stats" hidden></p>
+      <p id="invite-note" class="invite" hidden>🎉 A friend invited you! Pick a name and press <b>Join</b>.</p>
+      <label class="field">
+        <span>Your name</span>
+        <input id="name" maxlength="16" autocomplete="nickname" placeholder="Your name" spellcheck="false">
+      </label>
+      <div class="field">
+        <span>Your colour</span>
+        <div id="colors" class="colors"></div>
+      </div>
+      <button id="quick" class="btn big primary">Quick Play</button>
+      <div class="row">
+        <button id="create" class="btn">Create room</button>
+        <button id="join-open" class="btn">Join room</button>
+      </div>
+      <form id="join-form" class="row" hidden>
+        <input id="join-code" maxlength="5" placeholder="Room code" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button class="btn primary" type="submit">Join</button>
+      </form>
+      <p id="menu-error" class="error" hidden></p>
+      <details class="how">
+        <summary>How to play</summary>
+        <ul>
+          <li>Everyone floats down onto the island with an umbrella.</li>
+          <li>Throw water balloons to soak other players. Each splash makes them wetter; at zero dryness they're out.</li>
+          <li>Grab <b>Soakers</b> 🔫 for rapid fire, <b>Mega balloons</b> 🟣 for huge splashes, and <b>Towels</b> to dry off.</li>
+          <li>A rain storm shrinks the island. Stay inside the circle!</li>
+          <li><b>Computer:</b> WASD to move, mouse to aim, click to throw, 1/2/3 or wheel to switch, Space to jump, Shift or right-click to dash, E to wave.</li>
+          <li><b>Phone:</b> left thumb to walk, drag right thumb to aim and let go to throw. Tap the right side to throw at the nearest player.</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+
+  <!-- Connecting -->
+  <section id="connecting" class="screen" hidden>
+    <div class="card small">
+      <div class="spinner"></div>
+      <p id="connecting-text">Connecting…</p>
+      <button id="cancel" class="btn ghost">Cancel</button>
+    </div>
+  </section>
+
+  <!-- Error -->
+  <section id="error" class="screen" hidden>
+    <div class="card small">
+      <h2 id="error-title">Something went wrong</h2>
+      <p id="error-text"></p>
+      <button id="error-retry" class="btn primary">Find another match</button>
+      <button id="error-menu" class="btn ghost">Back to menu</button>
+    </div>
+  </section>
+
+  <!-- Lobby -->
+  <section id="lobby" class="screen" hidden>
+    <div class="card lobby-card">
+      <h2 id="lobby-title">Waiting for players</h2>
+      <div id="room-share" hidden>
+        <p class="code-line">Room code <strong id="room-code"></strong></p>
+        <button id="copy-link" class="btn">Copy invite link</button>
+      </div>
+      <p id="lobby-status" class="status"></p>
+      <ul id="lobby-players"></ul>
+      <div id="host-controls" hidden>
+        <label class="toggle"><input type="checkbox" id="bots-toggle" checked> Fill empty spots with bots</label>
+        <button id="start" class="btn big primary">Start match</button>
+      </div>
+      <button id="leave-lobby" class="btn ghost">Leave</button>
+    </div>
+  </section>
+
+  <!-- In-game HUD -->
+  <section id="hud" hidden>
+    <div id="touch-layer" hidden></div>
+    <div class="stick-base" id="stick-l-base" hidden></div>
+    <div class="stick-knob" id="stick-l-knob" hidden></div>
+    <div class="stick-base aim" id="stick-r-base" hidden></div>
+    <div class="stick-knob aim" id="stick-r-knob" hidden></div>
+
+    <div class="hud-tl">
+      <div class="pill" id="alive">👥 0</div>
+      <div class="pill" id="kills">💦 0</div>
+      <button class="pill btn-pill" id="mute" aria-label="Sound on or off">🔊</button>
+      <button class="pill btn-pill" id="leave-match" aria-label="Leave match">✕</button>
+    </div>
+    <div class="hud-top"><div class="pill storm" id="storm-timer"></div></div>
+    <canvas id="minimap" width="150" height="150"></canvas>
+    <div id="feed"></div>
+    <div id="center-msg"></div>
+    <div id="spectating" hidden>Watching <b id="spectating-name"></b> <button id="spectate-next" class="btn small-btn">Next ›</button></div>
+
+    <div class="hud-bottom">
+      <div id="hp"><div id="hp-fill"></div><span id="hp-text">Dryness 100</span></div>
+      <div id="slots">
+        <button class="slot" data-w="0"><span class="ico">🎈</span><span class="ammo">∞</span><span class="key">1</span></button>
+        <button class="slot" data-w="1"><span class="ico">🔫</span><span class="ammo">0</span><span class="key">2</span></button>
+        <button class="slot" data-w="2"><span class="ico">🟣</span><span class="ammo">0</span><span class="key">3</span></button>
+      </div>
+    </div>
+    <div id="emotes">
+      <button>💦</button><button>😂</button><button>😎</button><button>👋</button><button>😭</button><button>🏆</button>
+    </div>
+    <div id="touch-buttons">
+      <button id="t-swap" aria-label="Switch weapon">🔄</button>
+      <button id="t-dash" aria-label="Dash">💨</button>
+      <button id="t-jump" aria-label="Jump">⤴</button>
+    </div>
+  </section>
+
+  <!-- Round over -->
+  <section id="results" class="screen" hidden>
+    <div class="card small">
+      <h2 id="result-title"></h2>
+      <p id="result-place"></p>
+      <p id="result-stats" class="muted"></p>
+      <p class="muted">Next round starts in a few seconds…</p>
+      <button id="results-leave" class="btn ghost">Leave</button>
+    </div>
+  </section>
+
+  <script src="config.js"></script>
+  <script src="vendor/peerjs.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
