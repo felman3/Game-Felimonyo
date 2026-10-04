@@ -79,6 +79,7 @@ S.COLORS.forEach((c) => {
   b.addEventListener('click', () => {
     profile.color = c;
     store.set('color', c);
+    drawPreview();
     colorsBox.querySelectorAll('.swatch').forEach((s) => s.classList.toggle('on', s === b));
   });
   colorsBox.append(b);
@@ -96,10 +97,62 @@ S.HATS.forEach((h, i) => {
   b.addEventListener('click', () => {
     profile.hat = i;
     store.set('hat', i);
+    drawPreview();
     hatsBox.querySelectorAll('.hat-btn').forEach((x) => x.classList.toggle('on', x === b));
   });
   hatsBox.append(b);
 });
+
+// A little drawing of your splasher with the colour and hat you picked.
+function drawPreview() {
+  const c = $('preview');
+  const g = c.getContext('2d');
+  const W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  const cx = W / 2, top = 46, bw = 62, bh = 78;
+  g.fillStyle = 'rgba(43,35,64,0.15)';
+  g.beginPath(); g.ellipse(cx, top + bh + 6, 34, 7, 0, 0, Math.PI * 2); g.fill();
+  // Rounded rectangle drawn by hand (older iPhones lack ctx.roundRect).
+  const body = (x, y, w, h, r) => {
+    r = Math.min(r, w / 2, h / 2);
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+    g.fill();
+  };
+  g.fillStyle = shade(profile.color, -0.25);
+  body(cx - 26, top + bh - 10, 22, 14, 7);
+  body(cx + 4, top + bh - 10, 22, 14, 7);
+  g.fillStyle = profile.color;
+  body(cx - bw / 2, top, bw, bh, 31);
+  g.fillStyle = 'rgba(255,255,255,0.55)';
+  g.beginPath(); g.ellipse(cx, top + 52, 20, 18, 0, 0, Math.PI * 2); g.fill();
+  for (const sx of [-1, 1]) {
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(cx + sx * 12, top + 24, 8, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#2b2340';
+    g.beginPath(); g.arc(cx + sx * 12, top + 25, 4.5, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ff9cb5';
+    g.beginPath(); g.ellipse(cx + sx * 21, top + 36, 5, 3, 0, 0, Math.PI * 2); g.fill();
+  }
+  if (profile.hat) {
+    g.font = '34px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(S.HATS[profile.hat].icon, cx, top - 6);
+  }
+}
+
+function shade(hex, k) {
+  const n = parseInt(hex.slice(1), 16);
+  const f = (v) => Math.max(0, Math.min(255, Math.round(v * (1 + k))));
+  return 'rgb(' + f(n >> 16) + ',' + f((n >> 8) & 255) + ',' + f(n & 255) + ')';
+}
+drawPreview();
 
 function saveProfile() {
   const typed = $('name').value.trim();

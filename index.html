@@ -27,10 +27,13 @@
       <p class="tag">A water-balloon battle royale. Last one dry wins!</p>
       <p id="stats" class="stats" hidden></p>
       <p id="invite-note" class="invite" hidden>🎉 A friend invited you! Pick a name and press <b>Join</b>.</p>
-      <label class="field">
-        <span>Your name</span>
-        <input id="name" maxlength="16" autocomplete="nickname" placeholder="Your name" spellcheck="false">
-      </label>
+      <div class="me-row">
+        <canvas id="preview" width="120" height="140" aria-hidden="true"></canvas>
+        <label class="field">
+          <span>Your name</span>
+          <input id="name" maxlength="16" autocomplete="nickname" placeholder="Your name" spellcheck="false">
+        </label>
+      </div>
       <div class="field">
         <span>Your colour</span>
         <div id="colors" class="colors"></div>

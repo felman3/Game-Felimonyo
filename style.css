@@ -117,6 +117,9 @@ input[type="text"], input:not([type]) {
 
 input:focus { border-color: var(--accent); }
 
+.me-row { display: flex; align-items: flex-end; gap: 10px; }
+.me-row .field { flex: 1; }
+#preview { width: 72px; height: 84px; flex: none; margin-bottom: 10px; }
 .colors { display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; }
 
 .swatch {
