@@ -981,7 +981,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     });
     return {
       phase: phase === 'none' ? 'lobby' : phase, seed: worldSeed, tm: matchTime(), roster, ents: list,
-      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId
+      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId, heirs: heirs.slice()
     };
   }
 

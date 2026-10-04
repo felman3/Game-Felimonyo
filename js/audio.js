@@ -21,6 +21,7 @@ export function unlock() {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
   if (ctx.state === 'suspended') ctx.resume();
+  startAmbience();
 }
 
 export function isMuted() { return muted; }
@@ -85,6 +86,30 @@ export const sfx = {
   lose() { [523, 440, 349].forEach((f, i) => tone(f, 0.35, 'triangle', 0.22, null, i * 0.18)); },
   click() { tone(800, 0.05, 'sine', 0.15); }
 };
+
+// Gentle waves in the background.
+let waves = null;
+export function startAmbience() {
+  if (!ctx || waves) return;
+  const s = ctx.createBufferSource();
+  s.buffer = noiseBuf;
+  s.loop = true;
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.value = 520;
+  const g = ctx.createGain();
+  g.gain.value = 0.045;
+  // A slow swell, like waves rolling in.
+  const lfo = ctx.createOscillator();
+  lfo.frequency.value = 0.12;
+  const depth = ctx.createGain();
+  depth.gain.value = 0.035;
+  lfo.connect(depth).connect(g.gain);
+  s.connect(f).connect(g).connect(master);
+  s.start();
+  lfo.start();
+  waves = g;
+}
 
 // Steady rain while you stand in the storm.
 export function setRain(level) {

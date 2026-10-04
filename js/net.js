@@ -136,7 +136,7 @@ export async function quickPlay(profile, onStatus, isCancelled) {
       if (!guestPeer || guestPeer.destroyed) guestPeer = await openPeer();
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const { conn, welcome } = await joinId(guestPeer, quickId(n), profile);
+          const { conn, welcome } = await joinId(guestPeer, quickId(n), profile, { avoidBusy: true });
           return { role: 'guest', peer: guestPeer, conn, welcome };
         } catch (e) {
           if (isCancelled()) throw err('cancelled');

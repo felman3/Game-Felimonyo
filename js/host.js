@@ -61,10 +61,11 @@ export class Host {
   takeOver(st) {
     const now = performance.now();
     let maxId = 0;
-    for (const r of st.roster || []) {
-      const n = /^p(\d+)$/.exec(r.id);
+    const people = (st.roster || []).filter((r) => !r.bot).map((r) => r.id).concat(st.heirs || []);
+    for (const id of people) {
+      const n = /^p(\d+)$/.exec(id);
       if (n) maxId = Math.max(maxId, +n[1]);
-      if (!r.bot && r.id !== this.localId && r.id !== st.oldHost) this.expect.set(r.id, now + 15000);
+      if (id !== this.localId && id !== st.oldHost) this.expect.set(id, now + 15000);
     }
     this.nextId = maxId + 1;
     if (st.phase === 'lobby' || !st.seed || !st.roster) {
@@ -144,6 +145,13 @@ export class Host {
       if (!id) {
         if (msg.t !== 'hi') return;
         const humans = this.members.size;
+        // Quick Play looks for a match to play, not one to watch: send them to another island.
+        const busy = this.phase === 'over' || (this.phase === 'match' && (this.tm >= LATE_JOIN || this.practice));
+        if (msg.avoidBusy && busy && !msg.rejoin) {
+          try { c.send({ t: 'full', busy: true }); } catch (e) { /* ignore */ }
+          setTimeout(() => { try { c.close(); } catch (e) { /* ignore */ } }, 500);
+          return;
+        }
         if (humans >= S.MAX_HUMANS) {
           try { c.send({ t: 'full' }); } catch (e) { /* ignore */ }
           setTimeout(() => { try { c.close(); } catch (e) { /* ignore */ } }, 500);
