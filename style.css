@@ -520,6 +520,9 @@ body.touch #touch-buttons {
   .hud-tl { max-width: calc(100vw - 140px); }
   .pill { font-size: 0.82rem; padding: 6px 10px; }
   #center-msg { font-size: 1.15rem; }
+}
+
+@media (max-width: 600px) {
   .hud-top { justify-content: flex-start; padding-left: calc(12px + var(--safe-l)); top: calc(54px + var(--safe-t)); }
 }
 
@@ -682,4 +685,16 @@ body.warmup #emotes, body.warmup #leave-match, body.warmup #feed, body.warmup #s
   #lobby .btn { padding: 9px 12px; }
   #lobby .status { font-size: 0.95rem; }
   #lobby .warm-tip { display: none; }
+}
+
+/* Phones held sideways: a compact menu and HUD. */
+@media (max-height: 500px) {
+  .logo .l1 { font-size: 2rem; }
+  .logo .l2 { font-size: 1.7rem; }
+  .tag { margin: 6px 0 8px; font-size: 0.9rem; }
+  .card { padding: 16px 18px; }
+  .field { margin-bottom: 8px; }
+  .btn.big { padding: 11px; font-size: 1.1rem; margin: 2px 0 8px; }
+  #center-msg { top: 18%; font-size: 1rem; }
+  .hud-top { top: calc(12px + var(--safe-t)); }
 }

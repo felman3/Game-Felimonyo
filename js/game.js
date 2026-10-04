@@ -45,6 +45,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   let warm = false;          // running around the island while waiting in the lobby
   let myColor = '#ffffff';
   let myTeam = null;
+  let winnerId = null;
   const isMate = (e) => !!e && e.id !== myId && myTeam !== null && myTeam !== undefined && e.team === myTeam;
 
   const now = () => performance.now() / 1000;
@@ -397,6 +398,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
 
   function onOver(m) {
     phase = 'over';
+    winnerId = m.winner;
     input.setEnabled(false);
     R.setAim(null);
     setRain(0);
@@ -678,12 +680,14 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
         e.x = me.x; e.y = me.y; e.z = me.z; e.yaw = me.yaw;
         if (!me.alive) e.alive = false;
         R.updateAvatar(e.id, {
-          x: me.x, y: me.y, z: me.z, yaw: me.yaw, moving: me.moving, dash: me.dashT > 0, alive: me.alive,
+          x: me.x, y: me.y + (phase === 'over' && winnerId === myId ? Math.abs(Math.sin(time * 5)) * 1.2 : 0), z: me.z, yaw: me.yaw, moving: me.moving, dash: me.dashT > 0, alive: me.alive,
           hp: me.hp, umbrella: me.umbrella, weapon: me.weapon, shield: me.shield > 0
         }, dt, S.groundHeight(world, me.x, me.z));
       } else {
         const px = e.x, pz = e.z;
         interp(e, rt);
+        // The winner does a little victory hop.
+        if (phase === 'over' && e.id === winnerId && e.alive) e.y += Math.abs(Math.sin(time * 5)) * 1.2;
         const moving = Math.hypot(e.x - px, e.z - pz) > dt * 1.5;
         e.hidden = isHidden(e);
         R.updateAvatar(e.id, {

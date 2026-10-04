@@ -344,3 +344,8 @@ if (invite) {
   $('invite-note').hidden = false;
 }
 if (mobile) document.body.classList.add('touch');
+
+// Keep a copy on the device for instant loading and offline practice.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
