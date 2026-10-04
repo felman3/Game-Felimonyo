@@ -448,7 +448,8 @@ input:focus { border-color: var(--accent); }
   height: 40px;
   border-radius: 50%;
   border: 0;
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 8px rgba(43, 35, 64, 0.35), 0 0 0 2px rgba(43, 35, 64, 0.15);
   font-size: 1.2rem;
   cursor: pointer;
   padding: 0;
@@ -588,7 +589,7 @@ body.touch #touch-buttons {
   color: #fff;
   font-weight: 800;
   font-size: 0.78rem;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 4px rgba(0, 0, 0, 0.5);
   white-space: nowrap;
 }
 
@@ -647,6 +648,22 @@ body.warmup #emotes, body.warmup #leave-match, body.warmup #feed, body.warmup #s
 #lobby-players li { padding: 4px 10px 4px 6px; font-size: 0.88rem; }
 #lobby .btn.big { font-size: 1.1rem; padding: 12px; margin: 4px 0 4px; }
 #lobby .warm-tip { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0; }
+.modes { display: flex; gap: 6px; margin: 4px 0 8px; }
+.mode-btn {
+  flex: 1;
+  font: inherit;
+  font-weight: 800;
+  font-size: 0.9rem;
+  border: 0;
+  border-radius: 12px;
+  padding: 8px 6px;
+  background: #f5f2fb;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mode-btn.on { background: var(--accent); color: #fff; }
+.label.mate .nm { color: #9dffb5; }
+.label.mate .nm::before { content: "★ "; }
 #ping.bad { background: rgba(214, 51, 94, 0.8); }
 
 #results { z-index: 25; background: rgba(43, 35, 64, 0.25); }

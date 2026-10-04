@@ -7,7 +7,7 @@ No installs, no accounts, no payments, no game server.
 ## How it plays
 
 - **Quick Play** puts you on a public island with whoever else is looking for a match. After 20 seconds the match starts, and bots fill the empty spots so it's fun even alone.
-- **Create room** makes a private room with a code and an invite link for friends (up to 12 people). The person who made it presses **Start**, and can turn bots on or off.
+- **Create room** makes a private room with a code and an invite link for friends (up to 12 people). The person who made it presses **Start**, can turn bots on or off, and can pick **Solo**, **Duos** or **Squads**. Teammates land together, can't splash each other and win together.
 - **Practice** plays a match against bots straight away, even without internet.
 - **Weapons:** water balloons (unlimited, arc over walls), **Soakers** (rapid fire, stopped by walls) and **Mega balloons** (huge splash). **Towels** dry you off and **Bubbles** soak up the next splashes for you.
 - **Bushes** hide you from everyone until you throw something or someone walks right up to you.

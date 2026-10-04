@@ -40,6 +40,7 @@ export class Host {
     this.ents = new Map();      // everyone in the current match, bots included
     this.phase = 'lobby';
     this.bots = true;
+    this.teamSize = 1;          // 1 solo, 2 duos, 4 squads
     this.nextId = 1;
     this.projId = 0;
     this.tm = 0;
@@ -68,6 +69,7 @@ export class Host {
       if (id !== this.localId && id !== st.oldHost) this.expect.set(id, now + 15000);
     }
     this.nextId = maxId + 1;
+    this.teamSize = st.teams || 1;
     if (st.phase === 'lobby' || !st.seed || !st.roster) {
       this.enterLobby();
       return;
@@ -104,7 +106,7 @@ export class Host {
 
   makeEnt(p, x, z) {
     return {
-      id: p.id, name: p.name, color: p.color, hat: p.hat || 0, bot: p.bot,
+      id: p.id, name: p.name, color: p.color, hat: p.hat || 0, bot: p.bot, team: p.team === undefined ? p.id : p.team,
       x, z, y: S.DROP_Y, vy: 0, yaw: Math.atan2(-x, -z), ground: false, umbrella: true,
       dashT: 0, dashCd: 0, ddx: 0, ddz: 0,
       hp: S.MAX_HP, shield: 0, alive: true, ammo: [0, 0, 0], lastFire: -9, kills: 0, place: 0, f: 0,
@@ -114,6 +116,8 @@ export class Host {
   }
 
   newSeed() { return (Math.random() * 2147483647) | 0; }
+
+  fillTo() { return this.teamSize === 4 ? 12 : S.FILL_TO; }
 
   destroy() {
     this.dead = true;
@@ -195,7 +199,7 @@ export class Host {
       this.sendLobby();
     } else if (this.phase === 'match' && this.tm < LATE_JOIN && !this.practice) {
       // Just started: drop them in too.
-      const p = { id: m.id, name: m.name, color: m.color, hat: m.hat, bot: false };
+      const p = { id: m.id, name: m.name, color: m.color, hat: m.hat, bot: false, team: 1000 + this.nextId };
       const [x, z] = pointNear(this.world, 0, 0, S.ISLAND_R * 0.6);
       p.x = S.r2(x); p.z = S.r2(z);
       this.roster.push(p);
@@ -264,6 +268,9 @@ export class Host {
       case 'bots':
         if (id === this.localId) { this.bots = !!msg.on; this.sendLobby(); }
         break;
+      case 'teams':
+        if (id === this.localId && !this.quick && [1, 2, 4].includes(msg.size)) { this.teamSize = msg.size; this.sendLobby(); }
+        break;
       default:
     }
   }
@@ -282,7 +289,7 @@ export class Host {
   sendLobby() {
     const players = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, color: m.color, hat: m.hat }));
     const cd = this.countdownEnd ? Math.max(0, Math.ceil((this.countdownEnd - performance.now()) / 1000)) : null;
-    this.broadcast({ t: 'lobby', players, quick: this.quick, code: this.code, cd, bots: this.bots, seed: this.nextSeed, fill: S.FILL_TO, host: this.localId, practice: this.practice });
+    this.broadcast({ t: 'lobby', players, quick: this.quick, code: this.code, cd, bots: this.bots, seed: this.nextSeed, fill: this.fillTo(), host: this.localId, practice: this.practice, teams: this.teamSize });
   }
 
   /* ---------- Match ---------- */
@@ -305,7 +312,7 @@ export class Host {
     if (this.bots || roster.length < 2) {
       const names = shuffle(S.BOT_NAMES.slice());
       let n = 1;
-      while (roster.length < Math.max(this.bots ? S.FILL_TO : 2, 2) && roster.length < S.MAX_HUMANS + 4) {
+      while (roster.length < Math.max(this.bots ? this.fillTo() : 2, this.teamSize + 1) && roster.length < S.MAX_HUMANS + 4) {
         roster.push({
           id: 'b' + n, name: names[(n - 1) % names.length], color: S.COLORS[Math.floor(Math.random() * S.COLORS.length)],
           hat: Math.random() < 0.6 ? 1 + Math.floor(Math.random() * (S.HATS.length - 1)) : 0, bot: true
@@ -315,12 +322,16 @@ export class Host {
     }
 
     // Spread everyone around the island.
+    // Teams: players in join order, then bots. Teammates land next to each other.
+    roster.forEach((p, i) => { p.team = Math.floor(i / this.teamSize); });
+    const nTeams = roster[roster.length - 1].team + 1;
     const R = S.rng(seed + 99);
     const a0 = R() * Math.PI * 2;
     roster.forEach((p, i) => {
       let x = 0, z = 0;
+      const member = i % this.teamSize;
       for (let k = 0; k < 30; k++) {
-        const a = a0 + (i / roster.length) * Math.PI * 2 + (R() - 0.5) * 0.3 + k * 0.05;
+        const a = a0 + (p.team / nTeams) * Math.PI * 2 + (this.teamSize > 1 ? member * 0.06 : (R() - 0.5) * 0.3) + k * 0.05;
         const r = S.ISLAND_R * (0.35 + R() * 0.35);
         x = Math.cos(a) * r; z = Math.sin(a) * r;
         if (S.onLand(this.world, x, z) && !S.hitsObstacle(this.world, x, z, 1, 1)) break;
@@ -390,6 +401,7 @@ export class Host {
     const keep = [];
     for (const p of this.projs) {
       const wp = S.WEAPONS[p.w];
+      const team = this.ents.get(p.o).team;
       const a0 = p.age, a1 = this.tm - p.t0;
       p.age = a1;
       let done = false;
@@ -398,7 +410,7 @@ export class Host {
         S.shotPos(p, a, pos);
         // Hit a player?
         for (const e of this.ents.values()) {
-          if (!e.alive || e.id === p.o) continue;
+          if (!e.alive || e.id === p.o || e.team === team) continue;
           if (Math.hypot(e.x - pos.x, e.z - pos.z) < S.PLAYER_R + wp.size && pos.y > e.y - 0.2 && pos.y < e.y + S.PLAYER_H) {
             this.splash(p, pos, e);
             done = true;
@@ -433,7 +445,7 @@ export class Host {
     };
     if (wp.arc) {
       for (const e of this.ents.values()) {
-        if (!e.alive || e.id === p.o) continue;
+        if (!e.alive || e.id === p.o || (owner && e.team === owner.team)) continue;
         const d = Math.hypot(e.x - pos.x, e.z - pos.z);
         if (d > wp.splash || Math.abs(e.y + 1 - pos.y) > 3.5) continue;
         hurt(e, e === direct ? wp.dmg : S.lerp(wp.dmg, wp.minDmg, d / wp.splash));
@@ -448,9 +460,12 @@ export class Host {
     if (!e.alive) return;
     e.alive = false;
     e.hp = 0;
-    let alive = 0;
-    for (const o of this.ents.values()) if (o.alive) alive++;
-    e.place = alive + 1;
+    // A team's place is decided when its last member is out.
+    const teams = new Set();
+    for (const o of this.ents.values()) if (o.alive) teams.add(o.team);
+    if (!teams.has(e.team)) {
+      for (const o of this.ents.values()) if (o.team === e.team) o.place = teams.size + 1;
+    } else e.place = 0;
     if (by && by !== e) by.kills++;
     this.broadcast({ t: 'ko', v: e.id, by: by && by !== e ? by.id : null, place: e.place, left: !!quiet });
   }
@@ -519,15 +534,16 @@ export class Host {
   }
 
   checkEnd(dt) {
-    let alive = 0, humans = 0, last = null;
+    let humans = 0, last = null;
+    const teams = new Set();
     for (const e of this.ents.values()) {
       if (!e.alive) continue;
-      alive++;
+      teams.add(e.team);
       last = e;
       if (!e.bot) humans++;
     }
     let winner = null, over = false;
-    if (alive <= 1) { over = true; winner = last; }
+    if (teams.size <= 1) { over = true; winner = last; }
     // Everyone real is out: wrap up after a few seconds instead of watching bots for minutes.
     this.humanlessT = humans === 0 ? this.humanlessT + dt : 0;
     if (!over && this.humanlessT > 6) {
@@ -535,11 +551,11 @@ export class Host {
       for (const e of this.ents.values()) if (e.alive && (!winner || e.hp > winner.hp)) winner = e;
     }
     if (!over) return;
-    if (winner) winner.place = 1;
+    if (winner) for (const e of this.ents.values()) if (e.team === winner.team) e.place = 1;
     this.phase = 'over';
     this.overEnd = performance.now() + OVER_WAIT * 1000;
     const stats = [...this.ents.values()].map((e) => [e.id, e.kills, e.place]);
-    this.broadcast({ t: 'over', winner: winner ? winner.id : null, stats });
+    this.broadcast({ t: 'over', winner: winner ? winner.id : null, team: winner ? winner.team : null, stats });
   }
 
   sendSnap() {
@@ -631,7 +647,7 @@ export class Host {
       if (e.y - S.groundHeight(w, e.x, e.z) < 2) {
         let best = 26;
         for (const o of this.ents.values()) {
-          if (!o.alive || o === e) continue;
+          if (!o.alive || o === e || o.team === e.team) continue;
           const d = Math.hypot(o.x - e.x, o.z - e.z);
           if (d > S.SEE_HIDDEN && this.tm - o.lastFire > S.HIDE_AFTER && S.inBush(w, o.x, o.z)) continue;
           if (d < best && !S.lineBlocked(w, e.x, e.z, o.x, o.z, e.y + 2.6)) { best = d; ai.target = o; }
@@ -662,7 +678,7 @@ export class Host {
         if (!goal && e.hp > 45) {
           let bestE = 60;
           for (const o of this.ents.values()) {
-            if (!o.alive || o === e) continue;
+            if (!o.alive || o === e || o.team === e.team) continue;
             const d = Math.hypot(o.x - e.x, o.z - e.z);
             if (d < bestE && Math.hypot(o.x - cx, o.z - cz) < cr) { bestE = d; goal = [o.x, o.z]; }
           }
@@ -696,7 +712,7 @@ export class Host {
     // Step out of the way of balloons about to land nearby.
     let dodge = false;
     for (const p of this.projs) {
-      if (!p.arc || p.o === e.id || p.T - p.age > 0.8) continue;
+      if (!p.arc || p.o === e.id || p.T - p.age > 0.8 || this.ents.get(p.o).team === e.team) continue;
       const dx = e.x - p.tx, dz = e.z - p.tz, d = Math.hypot(dx, dz);
       const r = S.WEAPONS[p.w].splash + 1;
       if (d < r && Math.random() < ai.dodge) { mx = dx / (d || 1); mz = dz / (d || 1); dodge = true; break; }

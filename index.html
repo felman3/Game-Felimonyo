@@ -56,6 +56,7 @@
           <li>Everyone floats down onto the island with an umbrella.</li>
           <li>Throw water balloons to soak other players. Each splash makes them wetter; at zero dryness they're out.</li>
           <li>Grab <b>Soakers</b> 🔫 for rapid fire, <b>Mega balloons</b> 🟣 for huge splashes, <b>Towels</b> to dry off and <b>Bubbles</b> 🫧 that soak up splashes for you.</li>
+          <li>In a private room the host can pick <b>Duos</b> or <b>Squads</b>: teammates can't splash each other and win together.</li>
           <li>Hide in bushes 🌿: others can't see you until you throw something or come very close.</li>
           <li>Watch for 📦 supply drops: the first to reach one gets full dryness, a bubble and lots of ammo.</li>
           <li>A rain storm shrinks the island. Stay inside the circle!</li>
@@ -96,7 +97,13 @@
       </div>
       <p id="lobby-status" class="status"></p>
       <ul id="lobby-players"></ul>
+      <p id="mode-label" class="muted" hidden></p>
       <div id="host-controls" hidden>
+        <div id="mode-row" class="modes" hidden>
+          <button class="mode-btn on" data-size="1">Solo</button>
+          <button class="mode-btn" data-size="2">Duos</button>
+          <button class="mode-btn" data-size="4">Squads</button>
+        </div>
         <label class="toggle" id="bots-row"><input type="checkbox" id="bots-toggle" checked> Fill empty spots with bots</label>
         <button id="start" class="btn big primary">Start match</button>
       </div>

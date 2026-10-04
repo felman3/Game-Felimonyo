@@ -8,6 +8,7 @@ import { sfx, setRain } from './audio.js';
 const $ = (id) => document.getElementById(id);
 const INTERP = 0.1;           // draw other players this many seconds in the past
 const SEND_EVERY = 1 / 20;
+const MODE_NAMES = { 1: 'Solo', 2: 'Duos', 4: 'Squads' };
 const EMOTES = ['💦', '😂', '😎', '👋', '😭', '🏆'];
 
 export function createGame({ render: R, input, send, myId, isHost, mobile, onLeave }) {
@@ -43,6 +44,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   let hinted = false;
   let warm = false;          // running around the island while waiting in the lobby
   let myColor = '#ffffff';
+  let myTeam = null;
+  const isMate = (e) => !!e && e.id !== myId && myTeam !== null && myTeam !== undefined && e.team === myTeam;
 
   const now = () => performance.now() / 1000;
   const matchTime = () => now() + clockOff;
@@ -99,7 +102,11 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       if (mine) startWarmup(mine);
     }
     if (m.host) hostId = m.host;
-    roomInfo = { quick: m.quick, code: m.code, practice: m.practice };
+    roomInfo = { quick: m.quick, code: m.code, practice: m.practice, teams: m.teams || 1 };
+    document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('on', +b.dataset.size === roomInfo.teams));
+    $('mode-row').hidden = !isHost || m.quick;
+    $('mode-label').hidden = m.quick || isHost;
+    $('mode-label').textContent = 'Mode: ' + MODE_NAMES[roomInfo.teams];
     $('lobby-title').textContent = m.practice ? 'Practice' : m.quick ? 'Quick Play' : 'Your room';
     $('room-share').hidden = m.quick || m.practice;
     if (!m.quick) $('room-code').textContent = m.code.toUpperCase();
@@ -183,8 +190,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     $('labels').append(label);
     ents.set(r.id, {
       id: r.id, name: r.name, color: r.color, bot: r.bot, label, buf: [{ t: tm, x: r.x, y: S.DROP_Y, z: r.z, yaw: 0 }],
-      x: r.x, y: S.DROP_Y, z: r.z, yaw: 0, hp: S.MAX_HP, alive: true, f: 9, lastHp: S.MAX_HP, emoteT: 0, kills: 0
+      x: r.x, y: S.DROP_Y, z: r.z, yaw: 0, hp: S.MAX_HP, alive: true, f: 9, lastHp: S.MAX_HP, emoteT: 0, kills: 0, team: r.team
     });
+    if (r.id === myId) myTeam = r.team;
+    else if (isMate(ents.get(r.id))) label.classList.add('mate');
     R.addAvatar(r.id, r.color, r.hat);
   }
 
@@ -202,6 +211,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     for (const p of world.pickups) R.setPickupTaken(p.i, false);
     taken.clear();
     roster = m.roster.slice();
+    const mineR = m.roster.find((r) => r.id === myId);
+    myTeam = mineR ? mineR.team : null;
     if (m.quick !== undefined) roomInfo = Object.assign({}, roomInfo, { quick: m.quick, code: m.code });
     if (m.host) hostId = m.host;
     for (const r of m.roster) addEnt(r, m.tm || 0);
@@ -348,8 +359,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       R.setAim(null);
       sfx.ko();
       vibrate([80, 60, 160]);
-      centerMsg('Soaked! You placed #' + m.place + (by ? ' — by ' + by.name : ''), 4);
-      spectate = by && by.alive ? by.id : null;
+      const mate = [...ents.values()].find((o) => isMate(o) && o.alive);
+      if (mate) centerMsg('Soaked' + (by ? ' by ' + by.name : '') + '! Your team is still in — cheer them on 📣', 4);
+      else centerMsg('Soaked! You placed #' + m.place + (by ? ' — by ' + by.name : ''), 4);
+      spectate = mate ? mate.id : by && by.alive ? by.id : null;
       setTimeout(() => { if (phase === 'match') $('spectating').hidden = false; }, 1500);
     } else {
       if (m.by === myId) {
@@ -389,7 +402,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     setRain(0);
     const winner = m.winner && ents.get(m.winner);
     const mine = m.stats.find((s) => s[0] === myId);
-    const won = m.winner === myId;
+    const won = m.winner === myId || (m.team !== null && m.team !== undefined && m.team === myTeam && (roomInfo.teams || 1) > 1);
+    const winners = [...ents.values()].filter((e) => m.team !== null && e.team === m.team);
     if (won) sfx.win(); else if (me.playing) sfx.lose();
     if (winner) {
       const wp = winner.id === myId ? me : winner;
@@ -403,7 +417,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       if (winner.id !== myId) spectate = winner.id;
     }
     if (me.playing && mine) saveStats(won, mine[2], mine[1]);
-    $('result-title').textContent = won ? 'Winner winner, splash dinner! 🏆' : winner ? winner.name + ' wins! 🏆' : 'Everyone got soaked!';
+    const winNames = winners.length > 1 ? winners.map((e) => e.name).join(' & ') + ' win' : winner ? winner.name + ' wins' : '';
+    $('result-title').textContent = won ? 'Winner winner, splash dinner! 🏆' : winNames ? winNames + '! 🏆' : 'Everyone got soaked!';
     $('result-place').textContent = mine ? (won ? 'Last one dry! ' : 'You placed #' + mine[2] + '. ') + 'Soaked ' + mine[1] + ' player' + (mine[1] === 1 ? '' : 's') + '.' : 'You watched this round.';
     // Everyone, best place first (players still dry when the round was called share the top spots).
     const rows = m.stats.slice().sort((a, b) => (a[2] || 1.5) - (b[2] || 1.5) || b[1] - a[1]);
@@ -475,7 +490,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   // Others in bushes vanish unless they just threw something or you're right next to them.
   // Spectators see everyone.
   function isHidden(e) {
-    if (!e.alive || !(me.playing && me.alive) || (e.f & 128)) return false;
+    if (!e.alive || !(me.playing && me.alive) || (e.f & 128) || isMate(e)) return false;
     if (Math.hypot(e.x - me.x, e.z - me.z) < S.SEE_HIDDEN) return false;
     return !!S.inBush(world, e.x, e.z);
   }
@@ -504,7 +519,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   function nearestEnemy(range) {
     let best = null, bd = range;
     for (const e of ents.values()) {
-      if (e.id === myId || !e.alive || e.hidden) continue;
+      if (e.id === myId || !e.alive || e.hidden || isMate(e)) continue;
       const d = Math.hypot(e.x - me.x, e.z - me.z);
       if (d < bd) { bd = d; best = e; }
     }
@@ -908,6 +923,15 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       mctx.lineWidth = 1.5;
       mctx.stroke();
     }
+    for (const e of ents.values()) {
+      if (!isMate(e) || !e.alive) continue;
+      mctx.beginPath();
+      mctx.arc(toMap(e.x), toMap(e.z), 4, 0, Math.PI * 2);
+      mctx.fillStyle = e.color;
+      mctx.strokeStyle = '#ffffff';
+      mctx.lineWidth = 1.5;
+      mctx.fill(); mctx.stroke();
+    }
     for (const cr of crates.values()) {
       const x = toMap(cr.x), y = toMap(cr.z);
       mctx.fillStyle = '#ffd84d';
@@ -954,6 +978,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   });
   on($('start'), 'click', () => { sfx.click(); send({ t: 'start' }); });
   on($('bots-toggle'), 'change', (e) => send({ t: 'bots', on: e.target.checked }));
+  document.querySelectorAll('.mode-btn').forEach((b) => on(b, 'click', () => { sfx.click(); send({ t: 'teams', size: +b.dataset.size }); }));
   on($('leave-lobby'), 'click', () => onLeave());
   on($('leave-match'), 'click', () => { if (!me.alive || phase !== 'match' || confirm('Leave this match?')) onLeave(); });
   on($('results-leave'), 'click', () => onLeave());
@@ -981,7 +1006,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     });
     return {
       phase: phase === 'none' ? 'lobby' : phase, seed: worldSeed, tm: matchTime(), roster, ents: list,
-      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId, heirs: heirs.slice()
+      taken: [...taken], myAmmo: [me.ammo[1], me.ammo[2]], quick: roomInfo.quick, code: roomInfo.code, oldHost: hostId, heirs: heirs.slice(), teams: roomInfo.teams || 1
     };
   }
 
