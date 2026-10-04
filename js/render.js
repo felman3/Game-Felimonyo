@@ -9,8 +9,15 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 export function createRenderer(canvas, { mobile }) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.6 : 2));
-  renderer.shadowMap.enabled = !mobile;
+  // Quality steps, best first. The game steps down by itself if it runs slowly.
+  const dpr = window.devicePixelRatio || 1;
+  const LEVELS = mobile
+    ? [{ pr: Math.min(dpr, 1.6), shadows: false }, { pr: Math.min(dpr, 1.25), shadows: false }, { pr: 1, shadows: false }, { pr: 0.75, shadows: false }]
+    : [{ pr: Math.min(dpr, 2), shadows: true }, { pr: Math.min(dpr, 1.5), shadows: true }, { pr: 1, shadows: false }, { pr: 0.75, shadows: false }];
+  let quality = 0;
+  try { quality = Math.min(LEVELS.length - 1, Math.max(0, +localStorage.getItem('sr-quality' + (mobile ? '-m' : '')) || 0)); } catch (e) { /* ignore */ }
+  renderer.setPixelRatio(LEVELS[quality].pr);
+  renderer.shadowMap.enabled = LEVELS[quality].shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
@@ -23,7 +30,7 @@ export function createRenderer(canvas, { mobile }) {
   const hemi = new THREE.HemisphereLight('#e6f6ff', '#5e8a4a', 1.5);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight('#fff1d6', 2.4);
-  sun.castShadow = !mobile;
+  sun.castShadow = LEVELS[quality].shadows;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
   sc.left = -40; sc.right = 40; sc.top = 40; sc.bottom = -40; sc.near = 1; sc.far = 160;
@@ -889,6 +896,21 @@ export function createRenderer(canvas, { mobile }) {
   window.addEventListener('resize', resize);
   resize();
 
+  function lowerQuality() {
+    if (quality >= LEVELS.length - 1) return false;
+    quality++;
+    const L = LEVELS[quality];
+    renderer.setPixelRatio(L.pr);
+    resize();
+    if (renderer.shadowMap.enabled !== L.shadows) {
+      renderer.shadowMap.enabled = L.shadows;
+      sun.castShadow = L.shadows;
+      scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+    }
+    try { localStorage.setItem('sr-quality' + (mobile ? '-m' : ''), String(quality)); } catch (e) { /* ignore */ }
+    return true;
+  }
+
   function follow(x, y, z, snap) {
     orbit = false;
     camTarget.set(x, y, z);
@@ -960,6 +982,6 @@ export function createRenderer(canvas, { mobile }) {
     setWorld, setPickupTaken, addAvatar, removeAvatar, clearAvatars, updateAvatar, avatarThrow, avatarHit,
     addShot, moveShot, removeShot, clearShots, splash, smallSplash, setStorm, setAim, setInBush,
     addCrate, updateCrate, removeCrate, clearCrates,
-    follow, setOrbit, addShake, render, groundAt, toScreen, resize
+    follow, setOrbit, addShake, render, groundAt, toScreen, resize, lowerQuality
   };
 }

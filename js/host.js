@@ -10,7 +10,8 @@ const SNAP_EVERY = 1 / 15;
 const QUICK_WAIT = 20;      // seconds a public island waits for players
 const QUICK_MIN_WAIT = 8;
 const OVER_WAIT = 9;
-const TIMEOUT_MS = 10000;   // a player we haven't heard from for this long has left
+const TIMEOUT_MS = 10000;
+const LATE_JOIN = 25;       // players arriving this early into a match still get to play   // a player we haven't heard from for this long has left
 
 // Timers in hidden tabs get slowed to once a second; a worker's don't, so the
 // match keeps running if the host switches tabs.
@@ -184,6 +185,17 @@ export class Host {
         this.countdownEnd = Math.max(this.countdownEnd, performance.now() + QUICK_MIN_WAIT * 1000);
       }
       this.sendLobby();
+    } else if (this.phase === 'match' && this.tm < LATE_JOIN && !this.practice) {
+      // Just started: drop them in too.
+      const p = { id: m.id, name: m.name, color: m.color, hat: m.hat, bot: false };
+      const [x, z] = pointNear(this.world, 0, 0, S.ISLAND_R * 0.6);
+      p.x = S.r2(x); p.z = S.r2(z);
+      this.roster.push(p);
+      this.ents.set(m.id, this.makeEnt(p, x, z));
+      m.spectator = false;
+      this.sendTo(m, this.startMsg());
+      for (const i of this.taken) this.sendTo(m, { t: 'pk', i, by: null });
+      this.broadcast({ t: 'add', r: p });
     } else {
       // Arrived mid-match: watch until the next round.
       this.sendTo(m, this.startMsg());
@@ -314,7 +326,7 @@ export class Host {
   }
 
   startMsg() {
-    return { t: 'start', seed: this.seed, roster: this.roster, tm: S.r2(this.tm) };
+    return { t: 'start', seed: this.seed, roster: this.roster, tm: S.r2(this.tm), quick: this.quick, code: this.code, host: this.localId };
   }
 
   playerMoved(e, msg) {

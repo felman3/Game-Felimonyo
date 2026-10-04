@@ -39,9 +39,20 @@ const input = createInput({
 
 let session = null; // { game, host?, peer, conn? }
 let last = performance.now();
+// Watch the frame rate during matches and lower the quality if it's choppy.
+let fpsT = 0, fpsN = 0, fpsSkip = 2;
 function loop(t) {
   const dt = Math.min(0.25, (t - last) / 1000);
   last = t;
+  if (session && !document.hidden && dt < 0.25) {
+    fpsT += dt; fpsN++;
+    if (fpsT > 4) {
+      const fps = fpsN / fpsT;
+      if (fpsSkip > 0) fpsSkip--; // ignore the first seconds while things load
+      else if (fps < 34) R.lowerQuality();
+      fpsT = 0; fpsN = 0;
+    }
+  }
   if (session) session.game.frame(dt, t / 1000);
   else R.render(dt, t / 1000, false);
   requestAnimationFrame(loop);
@@ -276,10 +287,11 @@ function endSession() {
   }
 }
 
-function leave() {
+function leave(findNew) {
   endSession();
   history.replaceState(null, '', location.pathname);
   screen('menu');
+  if (findNew === true) go('quick');
 }
 
 /* ---------- Buttons ---------- */

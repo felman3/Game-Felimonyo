@@ -39,6 +39,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   const taken = new Set();
   const crates = new Map();
   let meHidden = false;
+  let streak = 0, lastKoT = -99;
+  let hinted = false;
 
   const now = () => performance.now() / 1000;
   const matchTime = () => now() + clockOff;
@@ -66,6 +68,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       case 'ko': onKO(m); break;
       case 'pk': onPickup(m); break;
       case 'crate': onCrate(m); break;
+      case 'add': onAdd(m); break;
       case 'crateTaken': onCrateTaken(m); break;
       case 'over': onOver(m); break;
       case 'feed': feed(m.text); break;
@@ -144,24 +147,36 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     document.body.classList.remove('outside');
   }
 
+  function addEnt(r, tm) {
+    const label = document.createElement('div');
+    label.className = 'label' + (r.id === myId ? ' me' : '');
+    label.innerHTML = '<span class="nm"></span><span class="bar"><i></i></span><span class="emote"></span>';
+    label.querySelector('.nm').textContent = r.name;
+    $('labels').append(label);
+    ents.set(r.id, {
+      id: r.id, name: r.name, color: r.color, bot: r.bot, label, buf: [{ t: tm, x: r.x, y: S.DROP_Y, z: r.z, yaw: 0 }],
+      x: r.x, y: S.DROP_Y, z: r.z, yaw: 0, hp: S.MAX_HP, alive: true, f: 9, lastHp: S.MAX_HP, emoteT: 0, kills: 0
+    });
+    R.addAvatar(r.id, r.color, r.hat);
+  }
+
+  // Someone dropped in late (the first seconds of a match).
+  function onAdd(m) {
+    if (phase !== 'match' || ents.has(m.r.id)) return;
+    roster.push(m.r);
+    addEnt(m.r, matchTime());
+    feed(m.r.name + ' dropped in late ☂️');
+  }
+
   function startMatch(m) {
     clearMatch();
     ensureWorld(m.seed);
     for (const p of world.pickups) R.setPickupTaken(p.i, false);
     taken.clear();
-    roster = m.roster;
-    for (const r of m.roster) {
-      const label = document.createElement('div');
-      label.className = 'label' + (r.id === myId ? ' me' : '');
-      label.innerHTML = '<span class="nm"></span><span class="bar"><i></i></span><span class="emote"></span>';
-      label.querySelector('.nm').textContent = r.name;
-      $('labels').append(label);
-      ents.set(r.id, {
-        id: r.id, name: r.name, color: r.color, bot: r.bot, label, buf: [{ t: m.tm || 0, x: r.x, y: S.DROP_Y, z: r.z, yaw: 0 }],
-        x: r.x, y: S.DROP_Y, z: r.z, yaw: 0, hp: S.MAX_HP, alive: true, f: 9, lastHp: S.MAX_HP, emoteT: 0, kills: 0
-      });
-      R.addAvatar(r.id, r.color, r.hat);
-    }
+    roster = m.roster.slice();
+    if (m.quick !== undefined) roomInfo = Object.assign({}, roomInfo, { quick: m.quick, code: m.code });
+    if (m.host) hostId = m.host;
+    for (const r of m.roster) addEnt(r, m.tm || 0);
     const mine = m.roster.find((r) => r.id === myId);
     me.playing = !!mine;
     me.alive = me.playing;
@@ -306,7 +321,14 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       spectate = by && by.alive ? by.id : null;
       setTimeout(() => { if (phase === 'match') $('spectating').hidden = false; }, 1500);
     } else {
-      if (m.by === myId) { sfx.koOther(); centerMsg('You soaked ' + e.name + '! 💦', 2); }
+      if (m.by === myId) {
+        sfx.koOther();
+        const t = now();
+        streak = t - lastKoT < 8 ? streak + 1 : 1;
+        lastKoT = t;
+        const names = ['', '', 'Double splash! 💦💦', 'Triple splash! 💦💦💦', 'Splash-tacular! 🌊', 'Unstoppable tsunami! 🌊🌊'];
+        centerMsg(streak > 1 ? names[Math.min(streak, 5)] : 'You soaked ' + e.name + '! 💦', 2.2);
+      }
       if (spectate === m.v) spectate = by && by.alive ? by.id : null;
     }
   }
@@ -373,6 +395,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       table.append(tr);
     });
     $('result-stats').textContent = '';
+    $('results-new').hidden = !roomInfo.quick;
     setTimeout(() => { if (phase === 'over') show('results'); }, 1800);
   }
 
@@ -619,6 +642,17 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       meHidden = hiddenNow;
       R.setInBush(hiddenNow);
       $('hidden-pill').hidden = !hiddenNow;
+    }
+
+    // First match on this device: a quick reminder of the controls once you land.
+    if (!hinted && me.alive && t > S.DROP_TIME + 1 && !me.umbrella) {
+      hinted = true;
+      let seen = false;
+      try { seen = localStorage.getItem('sr-hinted') === '1'; localStorage.setItem('sr-hinted', '1'); } catch (e) { /* ignore */ }
+      if (!seen) {
+        centerMsg(mobile ? 'Left thumb: walk · Right thumb: aim, let go to throw · Tap right: quick throw'
+          : 'WASD: walk · Mouse: aim · Click: throw · Space: jump · Shift: dash', 6);
+      }
     }
 
     // Supply drops falling.
@@ -868,6 +902,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   on($('leave-lobby'), 'click', () => onLeave());
   on($('leave-match'), 'click', () => { if (!me.alive || phase !== 'match' || confirm('Leave this match?')) onLeave(); });
   on($('results-leave'), 'click', () => onLeave());
+  on($('results-new'), 'click', () => onLeave(true));
 
   function destroy() {
     destroyed = true;
