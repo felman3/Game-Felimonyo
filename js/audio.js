@@ -78,6 +78,7 @@ export const sfx = {
   ko() { tone(600, 0.5, 'triangle', 0.3, 120); noise(0.6, 500, 0.7, 0.35, 200); },
   koOther() { tone(1046, 0.1, 'sine', 0.2); tone(1318, 0.16, 'sine', 0.2, null, 0.09); },
   beep(high) { tone(high ? 1046 : 660, 0.14, 'sine', 0.25); },
+  boing() { tone(220, 0.35, 'sine', 0.3, 880); tone(330, 0.2, 'triangle', 0.12, 990, 0.05); },
   jump() { tone(420, 0.14, 'sine', 0.15, 760); },
   dash() { noise(0.15, 1500, 1, 0.2, 500); },
   win() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.3, 'triangle', 0.25, null, i * 0.13)); },

@@ -41,6 +41,8 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   let meHidden = false;
   let streak = 0, lastKoT = -99;
   let hinted = false;
+  let warm = false;          // running around the island while waiting in the lobby
+  let myColor = '#ffffff';
 
   const now = () => performance.now() / 1000;
   const matchTime = () => now() + clockOff;
@@ -74,6 +76,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       case 'feed': feed(m.text); break;
       case 'note': centerMsg(m.text, 3); break;
       case 'emote': showEmote(m.id, m.e); break;
+      case 'pong': if (!isHost) showPing(Date.now() - m.c); break;
       case 'heirs': heirs = m.l || []; hostId = m.h || hostId; break;
       default:
     }
@@ -91,6 +94,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       setRain(0);
     }
     ensureWorld(m.seed);
+    if (!warm) {
+      const mine = m.players.find((p) => p.id === myId);
+      if (mine) startWarmup(mine);
+    }
     if (m.host) hostId = m.host;
     roomInfo = { quick: m.quick, code: m.code, practice: m.practice };
     $('lobby-title').textContent = m.practice ? 'Practice' : m.quick ? 'Quick Play' : 'Your room';
@@ -126,10 +133,31 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     $('bots-toggle').checked = !!m.bots;
   }
 
+  // While waiting: walk, jump, bounce and throw balloons on the next island (just for you).
+  function startWarmup(mine) {
+    warm = true;
+    myColor = mine.color;
+    R.addAvatar(myId, mine.color, mine.hat);
+    let x = 0, z = 0;
+    for (let k = 0; k < 40; k++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * 30;
+      x = Math.cos(a) * r; z = Math.sin(a) * r;
+      if (S.onLand(world, x, z) && !S.hitsObstacle(world, x, z, 1, 1.2)) break;
+    }
+    Object.assign(me, {
+      playing: true, alive: true, hp: S.MAX_HP, shield: 0, ammo: [0, 0, 0], weapon: 0, lastFire: -9,
+      x, z, y: S.groundHeight(world, x, z), vy: 0, ground: true, umbrella: false, dashT: 0, dashCd: 0
+    });
+    R.follow(me.x, me.y, me.z, true);
+    input.setEnabled(true);
+    updateSlots();
+  }
+
   /* ---------- Match ---------- */
   function clearMatch() {
     R.clearAvatars();
     R.clearShots();
+    warm = false;
     R.clearCrates();
     crates.clear();
     R.setInBush(false);
@@ -178,6 +206,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     if (m.host) hostId = m.host;
     for (const r of m.roster) addEnt(r, m.tm || 0);
     const mine = m.roster.find((r) => r.id === myId);
+    if (mine) myColor = mine.color;
     me.playing = !!mine;
     me.alive = me.playing;
     Object.assign(me, { hp: S.MAX_HP, shield: 0, ammo: [0, 0, 0], weapon: 0, kills: 0, lastFire: -9, place: 0, vy: 0, dashT: 0, dashCd: 0, ground: false, umbrella: true });
@@ -287,6 +316,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       if (id === myId) {
         const src = ents.get(m.o);
         if (src && src.id !== myId) hitFrom(src.x - me.x, src.z - me.z);
+        vibrate(50);
         sfx.hurt();
         R.addShake(0.35);
         flash();
@@ -317,6 +347,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       input.setEnabled(false);
       R.setAim(null);
       sfx.ko();
+      vibrate([80, 60, 160]);
       centerMsg('Soaked! You placed #' + m.place + (by ? ' — by ' + by.name : ''), 4);
       spectate = by && by.alive ? by.id : null;
       setTimeout(() => { if (phase === 'match') $('spectating').hidden = false; }, 1500);
@@ -401,7 +432,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
 
   /* ---------- Playing ---------- */
   function tryFire(aim) {
-    if (!me.alive || phase !== 'match' || !aim) return;
+    if (!me.alive || !aim || !(phase === 'match' || (phase === 'lobby' && warm))) return;
     const wp = S.WEAPONS[me.weapon];
     const t = now();
     if (t - me.lastFire < wp.cd) return;
@@ -413,12 +444,12 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     S.shotPath(world, p);
     const key = 'l' + (++lid);
     shots.set(key, { key, p, t0: matchTime(), age: 0, owner: myId });
-    R.addShot(key, p.w, ents.get(myId).color);
+    R.addShot(key, p.w, myColor);
     R.avatarThrow(myId);
     if (p.w === S.W_SOAKER) sfx.squirt(); else sfx.throw();
     const msg = { t: 'fire', w: p.w, x: p.sx, z: p.sz, lid };
     if (p.arc) { msg.tx = p.tx; msg.tz = p.tz; } else { msg.dx = p.dx; msg.dz = p.dz; }
-    send(msg);
+    if (phase === 'match') send(msg);
     me.yaw = Math.atan2(aim.x - me.x, aim.z - me.z);
     if (me.weapon > 0 && me.ammo[me.weapon] <= 0) me.weapon = 0;
     updateSlots();
@@ -521,6 +552,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
       S.movePlayer(world, me, { mx: mv.x, mz: mv.z, jump: jump && i === 0, dash: dash && i === 0 }, dt / steps);
     }
     const moving = Math.hypot(mv.x, mv.z) > 0.1;
+    if (me.bounced) { me.bounced = false; sfx.boing(); }
 
     // Aim: the mouse on computers, the right stick on phones.
     let aim = null;
@@ -549,7 +581,7 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     if (sendT >= SEND_EVERY) {
       sendT = 0;
       const f = (me.dashT > 0 ? 2 : 0) | (moving ? 4 : 0) | (me.umbrella ? 8 : 0) | (me.weapon << 4);
-      send({ t: 'st', x: S.r2(me.x), y: S.r2(me.y), z: S.r2(me.z), yaw: S.r2(me.yaw), f });
+      if (phase === 'match') send({ t: 'st', x: S.r2(me.x), y: S.r2(me.y), z: S.r2(me.z), yaw: S.r2(me.yaw), f });
     }
   }
 
@@ -607,6 +639,17 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
 
   function frame(dt, time) {
     if (destroyed) return;
+    if (phase === 'lobby' && warm) {
+      stepMe(dt);
+      R.updateAvatar(myId, {
+        x: me.x, y: me.y, z: me.z, yaw: me.yaw, moving: me.moving, dash: me.dashT > 0, alive: true,
+        hp: S.MAX_HP, umbrella: false, weapon: me.weapon
+      }, dt, S.groundHeight(world, me.x, me.z));
+      stepShots(matchTime(), dt);
+      R.follow(me.x, me.y, me.z);
+      R.render(dt, time, false);
+      return;
+    }
     if (phase !== 'match' && phase !== 'over') { R.render(dt, time, false); return; }
 
     const t = matchTime();
@@ -703,9 +746,10 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
   /* ---------- HUD ---------- */
   function show(which) {
     $('lobby').hidden = which !== 'lobby';
-    $('hud').hidden = which !== 'hud' && which !== 'results';
+    $('hud').hidden = which !== 'hud' && which !== 'results' && which !== 'lobby';
     $('results').hidden = which !== 'results';
-    $('touch-layer').hidden = !(mobile && which === 'hud');
+    document.body.classList.toggle('warmup', which === 'lobby');
+    $('touch-layer').hidden = !(mobile && (which === 'hud' || which === 'lobby'));
   }
 
   function updateHud(t) {
@@ -812,6 +856,17 @@ export function createGame({ render: R, input, send, myId, isHost, mobile, onLea
     el.style.transform = 'rotate(' + Math.atan2(dx, -dz) + 'rad)';
     $('hit-dirs').append(el);
     setTimeout(() => el.remove(), 900);
+  }
+
+  function showPing(ms) {
+    const el = $('ping');
+    el.hidden = false;
+    el.textContent = '📶 ' + ms + 'ms';
+    el.classList.toggle('bad', ms > 200);
+  }
+
+  function vibrate(ms) {
+    try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* ignore */ }
   }
 
   function flash() {
@@ -969,11 +1024,17 @@ function drawIslandMap(w) {
   c.width = c.height = N;
   const g = c.getContext('2d');
   const img = g.createImageData(N, N);
+  const pal = {
+    sunny: [[246, 223, 160], [124, 204, 92], [94, 165, 72]],
+    autumn: [[240, 210, 154], [198, 194, 90], [168, 160, 67]],
+    snowy: [[238, 243, 250], [247, 251, 255], [221, 232, 245]],
+    candy: [[255, 227, 240], [201, 179, 255], [255, 156, 207]]
+  }[w.theme] || [[246, 223, 160], [124, 204, 92], [94, 165, 72]];
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const x = (i / N - 0.5) * 260, z = (j / N - 0.5) * 260;
       const h = S.groundHeight(w, x, z);
-      const col = h < -0.3 ? [63, 178, 222] : h < 0.15 ? [120, 210, 230] : h < 0.6 ? [246, 223, 160] : h > 3 ? [94, 165, 72] : [124, 204, 92];
+      const col = h < -0.3 ? [63, 178, 222] : h < 0.15 ? [120, 210, 230] : h < 0.6 ? pal[0] : h > 3 ? pal[2] : pal[1];
       const o = (j * N + i) * 4;
       img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
     }

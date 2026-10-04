@@ -13,6 +13,8 @@ No installs, no accounts, no payments, no game server.
 - **Bushes** hide you from everyone until you throw something or someone walks right up to you.
 - **Supply drops** float down into the safe zone twice a match. Whoever reaches one first gets full dryness, a bubble and lots of ammo.
 - **Hats:** cap, crown, bunny ears, flower, propeller, party hat, frog and duck.
+- **Four kinds of island:** sunny, autumn, snowy and candy, each with trampolines that bounce you high into the air.
+- **Warm up while you wait:** run around the next island and practise throwing in the lobby.
 - **The storm** shrinks in 5 stages. Outside the circle the rain soaks you a little more every second.
 - **Last one dry wins.** You can watch the rest of the match after you're out, and a new round starts automatically.
 - Name tags, dryness bars, a minimap, a kill feed, emotes (👋 😂 😎 …), splash effects, sounds and screen shake.

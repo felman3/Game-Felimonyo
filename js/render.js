@@ -20,6 +20,19 @@ export function createRenderer(canvas, { mobile }) {
   renderer.shadowMap.enabled = LEVELS[quality].shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+  // Colours for each kind of island.
+  const PALETTES = {
+    sunny: { sky: '#8fd6ff', wet: '#e3c27e', sand: ['#f6dfa0', '#f1d896'], shore: '#c9d97a', grass: ['#7fd05c', '#78c957', '#86d663'], high: ['#63ad4b', '#5ea548'],
+      leaves: ['#4fb35a', '#5cc062', '#6acb5e'], blossom: '#ffb3d1', rock: ['#b3afc2', '#a39fb3'], bush: ['#3f9e4a', '#4aab52'], water: '#3fc6e6', deep: '#1f8fc4', hemi: '#e6f6ff', ground: '#5e8a4a' },
+    autumn: { sky: '#ffd2a8', wet: '#d9b27a', sand: ['#f0d29a', '#ebc98c'], shore: '#d6b866', grass: ['#c6c25a', '#bdb84f', '#cfc964'], high: ['#a8a043', '#9e963c'],
+      leaves: ['#ff8c3a', '#f2a03c', '#e8603c'], blossom: '#ffd84d', rock: ['#b9a99b', '#a8988a'], bush: ['#c97a2e', '#b8862f'], water: '#46b8d6', deep: '#2b84b0', hemi: '#fff0dc', ground: '#8a6a3a' },
+    snowy: { sky: '#cfe6ff', wet: '#c9d6e6', sand: ['#eef3fa', '#e6edf7'], shore: '#e9f0f8', grass: ['#f7fbff', '#eef5fd', '#ffffff'], high: ['#dde8f5', '#d6e2f1'],
+      leaves: ['#3c8a5e', '#2f7d55', '#4a9a68'], blossom: '#ffffff', rock: ['#9fa9bd', '#8f99ae'], bush: ['#4a8f6a', '#56a078'], water: '#5cc4e6', deep: '#2f86c0', hemi: '#ffffff', ground: '#9fb3c8' },
+    candy: { sky: '#ffc8e6', wet: '#f2b8d4', sand: ['#ffe3f0', '#ffd9ea'], shore: '#d9c8ff', grass: ['#c9b3ff', '#bfa6ff', '#d3bfff'], high: ['#ff9ccf', '#ff8fc6'],
+      leaves: ['#ff7ab8', '#7fd8ff', '#ffd84d'], blossom: '#ffffff', rock: ['#ffffff', '#ffe9a8'], bush: ['#9f7bff', '#ff8ac4'], water: '#7fe0e8', deep: '#4fb3d9', hemi: '#fff0fa', ground: '#b48ae0' }
+  };
+  let P = PALETTES.sunny;
+
   const scene = new THREE.Scene();
   const SKY = new THREE.Color('#8fd6ff');
   const STORM_SKY = new THREE.Color('#6f6fa8');
@@ -54,6 +67,12 @@ export function createRenderer(canvas, { mobile }) {
   let pickupMeshes = [];
 
   function setWorld(w) {
+    P = PALETTES[w.theme] || PALETTES.sunny;
+    SKY.set(P.sky);
+    water.material.color.set(P.water);
+    deep.material.color.set(P.deep);
+    hemi.color.set(P.hemi);
+    hemi.groundColor.set(P.ground);
     if (worldGroup) {
       scene.remove(worldGroup);
       worldGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
@@ -63,6 +82,7 @@ export function createRenderer(canvas, { mobile }) {
     worldGroup.add(buildTerrain(w));
     buildObstacles(w, worldGroup);
     buildBushes(w, worldGroup);
+    for (const d of w.pads) worldGroup.add(makePad(d));
     pickupMeshes = w.pickups.map((p) => {
       const m = makePickup(p.type);
       m.position.set(p.x, p.y, p.z);
@@ -78,11 +98,11 @@ export function createRenderer(canvas, { mobile }) {
     const c = new THREE.Color();
     const pick = (h, i, j) => {
       const v = ((i * 7919 + j * 104729) % 97) / 97;
-      if (h < -0.4) return c.set('#e3c27e');
-      if (h < 0.45) return c.set(v < 0.5 ? '#f6dfa0' : '#f1d896');
-      if (h < 0.85) return c.set('#c9d97a');
-      if (h > 3.2) return c.set(v < 0.5 ? '#63ad4b' : '#5ea548');
-      return c.set(v < 0.33 ? '#7fd05c' : v < 0.66 ? '#78c957' : '#86d663');
+      if (h < -0.4) return c.set(P.wet);
+      if (h < 0.45) return c.set(P.sand[v < 0.5 ? 0 : 1]);
+      if (h < 0.85) return c.set(P.shore);
+      if (h > 3.2) return c.set(P.high[v < 0.5 ? 0 : 1]);
+      return c.set(P.grass[v < 0.33 ? 0 : v < 0.66 ? 1 : 2]);
     };
     const vert = (i, j) => {
       const x = -w.half + i * w.cell, z = -w.half + j * w.cell;
@@ -130,7 +150,7 @@ export function createRenderer(canvas, { mobile }) {
       m4.compose(p.set(o.x + 0.2, o.y0 + 5.2 * sz, o.z - 0.1), q, s.set(sz, sz, sz));
       leaf2.setMatrixAt(i, m4);
       const blossom = o.v > 0.9;
-      c.set(blossom ? '#ffb3d1' : o.v < 0.3 ? '#4fb35a' : o.v < 0.6 ? '#5cc062' : '#6acb5e');
+      c.set(blossom ? P.blossom : P.leaves[o.v < 0.3 ? 0 : o.v < 0.6 ? 1 : 2]);
       leaf1.setColorAt(i, c);
       c.offsetHSL(0, 0, 0.05);
       leaf2.setColorAt(i, c);
@@ -142,7 +162,7 @@ export function createRenderer(canvas, { mobile }) {
       q.setFromEuler(new THREE.Euler(o.v * 3, o.v * 9, o.v * 5));
       m4.compose(p.set(o.x, o.y0 + o.r * 0.25, o.z), q, s.set(o.r, o.r * 0.95, o.r));
       rock.setMatrixAt(i, m4);
-      rock.setColorAt(i, c.set(o.v < 0.5 ? '#b3afc2' : '#a39fb3'));
+      rock.setColorAt(i, c.set(P.rock[o.v < 0.5 ? 0 : 1]));
     });
     rock.castShadow = true; rock.receiveShadow = true;
     group.add(rock);
@@ -180,7 +200,7 @@ export function createRenderer(canvas, { mobile }) {
     }
   }
 
-  const bushMat = lambert('#3f9e4a', { transparent: true, opacity: 1 });
+  const bushMat = lambert('#ffffff', { transparent: true, opacity: 1 });
   function buildBushes(w, group) {
     const blobs = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), bushMat, w.bushes.length * 4);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
@@ -192,7 +212,7 @@ export function createRenderer(canvas, { mobile }) {
         q.setFromAxisAngle(UP, b.v * 6 + ox);
         m4.compose(p.set(b.x + ox * b.r * 0.7, b.y0 + r * 0.75, b.z + oz * b.r * 0.7), q, s.set(r, r * 1.05, r));
         blobs.setMatrixAt(i, m4);
-        blobs.setColorAt(i, c.set(b.v < 0.5 ? '#3f9e4a' : '#4aab52').offsetHSL(0, 0, ox * 0.04));
+        blobs.setColorAt(i, c.set(P.bush[b.v < 0.5 ? 0 : 1]).offsetHSL(0, 0, ox * 0.04));
         i++;
       }
     }
@@ -200,6 +220,25 @@ export function createRenderer(canvas, { mobile }) {
     blobs.receiveShadow = true;
     group.add(blobs);
   }
+  function makePad(d) {
+    const g = new THREE.Group();
+    const legs = new THREE.Mesh(new THREE.CylinderGeometry(d.r * 1.05, d.r * 1.15, 0.5, 14), lambert('#5b5f7a'));
+    legs.position.y = 0.25;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(d.r, 0.16, 6, 20), lambert('#ff5c8a'));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.55;
+    const mat = new THREE.Mesh(new THREE.CircleGeometry(d.r * 0.95, 20), lambert('#2b2340'));
+    mat.rotation.x = -Math.PI / 2;
+    mat.position.y = 0.5;
+    const star = new THREE.Mesh(new THREE.CircleGeometry(d.r * 0.35, 5), lambert('#ffd84d'));
+    star.rotation.x = -Math.PI / 2;
+    star.position.y = 0.52;
+    g.add(legs, rim, mat, star);
+    g.position.set(d.x, d.y0 - 0.1, d.z);
+    g.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    return g;
+  }
+
   // See-through bushes while you're inside one, so you can tell you're hidden.
   function setInBush(on) {
     bushMat.opacity = on ? 0.45 : 1;

@@ -45,6 +45,8 @@ export const HIDE_AFTER = 1.5;    // seconds after throwing before a bush hides 
 export const SEE_HIDDEN = 5;      // you can always spot someone this close
 export const CRATE_TIMES = [64, 134]; // match seconds when supply drops start falling
 export const CRATE_FALL = 12;
+export const PAD_BOUNCE = 21;     // trampoline launch speed
+export const THEMES = ['sunny', 'autumn', 'snowy', 'candy'];
 
 // Storm plan: [seconds before it shrinks, seconds to shrink, new radius, wetness per second once it starts]
 export const STORM_PLAN = [
@@ -131,7 +133,7 @@ export function buildWorld(seed) {
     }
   }
 
-  const w = { seed, hm, N, cell, half, coastR, obstacles: [], cells: new Map(), pickups: [], stamp: 0 };
+  const w = { seed, hm, N, cell, half, coastR, obstacles: [], cells: new Map(), pickups: [], stamp: 0, theme: THEMES[(seed >>> 3) % THEMES.length] };
 
   const obs = w.obstacles;
   const randomLand = (margin, minH) => {
@@ -187,6 +189,16 @@ export function buildWorld(seed) {
     }
   }
 
+  // Trampolines: step on one to bounce high into the air.
+  w.pads = [];
+  for (let n = 0, tries = 0; n < 12 && tries < 600; tries++) {
+    const p = randomLand(12, 0.7);
+    if (!p || !free(p[0], p[1], 1.6)) continue;
+    if (w.pads.some((d) => Math.hypot(d.x - p[0], d.z - p[1]) < 20)) continue;
+    w.pads.push({ x: p[0], z: p[1], r: 1.2, y0: groundHeight(w, p[0], p[1]) });
+    n++;
+  }
+
   // Bushes: walk in to hide. They don't block movement or water.
   w.bushes = [];
   for (let n = 0, tries = 0; n < 48 && tries < 1500; tries++) {
@@ -195,6 +207,7 @@ export function buildWorld(seed) {
     const r = 1.6 + R() * 0.8;
     if (!free(p[0], p[1], r)) continue;
     if (w.bushes.some((b) => Math.hypot(b.x - p[0], b.z - p[1]) < b.r + r + 1)) continue;
+    if (w.pads.some((d) => Math.hypot(d.x - p[0], d.z - p[1]) < r + 2.5)) continue;
     w.bushes.push({ x: p[0], z: p[1], r, y0: groundHeight(w, p[0], p[1]), v: R() });
     n++;
   }
@@ -202,6 +215,7 @@ export function buildWorld(seed) {
   for (let n = 0, tries = 0; n < 84 && tries < 2000; tries++) {
     const p = randomLand(6, 0.4);
     if (!p || !free(p[0], p[1], 0.6)) continue;
+    if (w.pads.some((d) => Math.hypot(d.x - p[0], d.z - p[1]) < 2.5)) continue;
     const roll = R();
     const type = roll < 0.3 ? PICK_SOAKER : roll < 0.52 ? PICK_MEGA : roll < 0.82 ? PICK_TOWEL : PICK_SHIELD;
     w.pickups.push({ i: w.pickups.length, x: p[0], z: p[1], y: groundHeight(w, p[0], p[1]), type });
@@ -332,6 +346,14 @@ export function movePlayer(w, s, input, dt) {
 
   const gh = groundHeight(w, s.x, s.z);
   if (s.ground && input.jump) { s.vy = JUMP_V; s.ground = false; }
+  if (s.ground && w.pads) {
+    for (const d of w.pads) {
+      if (Math.abs(d.x - s.x) < d.r && Math.abs(d.z - s.z) < d.r && Math.hypot(d.x - s.x, d.z - s.z) < d.r) {
+        s.vy = PAD_BOUNCE; s.ground = false; s.bounced = true;
+        break;
+      }
+    }
+  }
   if (s.ground && s.y - gh < 0.7) {
     s.y = gh;
     s.vy = 0;

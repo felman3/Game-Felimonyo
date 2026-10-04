@@ -636,11 +636,33 @@ body.outside #storm-vignette { opacity: 1; }
 #hit-vignette.on { animation: hitflash 0.45s ease-out; }
 @keyframes hitflash { 0% { opacity: 1; } 100% { opacity: 0; } }
 
-#results { z-index: 25; background: rgba(43, 35, 64, 0.25); }
-#lobby { align-items: flex-end; }
-#lobby .card { margin: auto auto 0; }
+/* Warming up in the lobby: a small card at the top, the island playable underneath. */
+body.warmup #minimap, body.warmup .hud-top, body.warmup #hp, body.warmup #alive, body.warmup #kills,
+body.warmup #emotes, body.warmup #leave-match, body.warmup #feed, body.warmup #slots .slot:not([data-w="0"]) { display: none !important; }
+#lobby { pointer-events: none; align-items: flex-start !important; z-index: 8; }
+#lobby .card { pointer-events: auto; margin: 0 auto !important; max-width: 380px; padding: 16px 18px; }
+#lobby .card h2 { font-size: 1.2rem; margin-bottom: 4px; }
+#lobby .status { margin: 6px 0; }
+#lobby-players { margin: 6px 0 10px; }
+#lobby-players li { padding: 4px 10px 4px 6px; font-size: 0.88rem; }
+#lobby .btn.big { font-size: 1.1rem; padding: 12px; margin: 4px 0 4px; }
+#lobby .warm-tip { color: var(--muted); font-size: 0.82rem; margin: 6px 0 0; }
+#ping.bad { background: rgba(214, 51, 94, 0.8); }
 
-@media (min-height: 700px) {
-  #lobby { align-items: center; }
-  #lobby .card { margin: auto; }
+#results { z-index: 25; background: rgba(43, 35, 64, 0.25); }
+
+
+@media (min-width: 700px) {
+  #lobby { justify-content: flex-start !important; padding-left: calc(16px + var(--safe-l)); padding-top: calc(16px + var(--safe-t)); }
+  #lobby .card { max-width: 320px; margin: 0 !important; }
+}
+
+@media (max-width: 699px) {
+  #lobby { padding-top: calc(8px + var(--safe-t)); }
+  #lobby .card { padding: 12px 14px; }
+  #lobby .card h2 { font-size: 1.05rem; }
+  #lobby .code-line strong { font-size: 1.25rem; }
+  #lobby .btn { padding: 9px 12px; }
+  #lobby .status { font-size: 0.95rem; }
+  #lobby .warm-tip { display: none; }
 }
